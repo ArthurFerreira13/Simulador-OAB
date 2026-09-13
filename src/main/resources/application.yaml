@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: ordem
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/banco_oab_dev
+    username: postgres
+    password: admin
+
+  jpa:
+    hibernate:
+      ddl-auto: validate   # Não valida nem cria o esquema — a BD é gerida externamente.
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: true
+    jdbc:
+      schema-initialization:
+        enabled: false
+
+  flyway:
+    # Flyway ativo: faz baseline da V1 (tabelas restauradas do backup)
+    # e executa apenas a partir da V2 em diante.
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
+
+logging:
+  level:
+    org.hibernate.SQL: debug
+    org.flywaydb: info
+
+app:
+  admin:
+    chave-cadastro: ${ADMIN_CADASTRO_CHAVE:troque-essa-chave-antes-de-usar}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
