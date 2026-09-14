@@ -15,4 +15,6 @@ public interface QuestaoRepository extends JpaRepository<Questao, Integer> {
         ORDER BY q.numero ASC, a.letra ASC
         """)
     List<Questao> findByProvaIdComAlternativas(@Param("provaId") Integer provaId);
+
+    List<Questao> findByIdIn(List<Integer> ids);
 }

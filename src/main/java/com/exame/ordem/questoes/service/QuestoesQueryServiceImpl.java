@@ -1,10 +1,10 @@
-// com/exame/ordem/questoes/service/QuestoesQueryServiceImpl.java
 package com.exame.ordem.questoes.service;
 
 import com.exame.ordem.questoes.NumeroProvaExtractor;
-import com.exame.ordem.questoes.dto.AlternativaResumo;
-import com.exame.ordem.questoes.dto.QuestaoResumo;
 import com.exame.ordem.questoes.QuestoesQueryService;
+import com.exame.ordem.questoes.dto.AlternativaResumo;
+import com.exame.ordem.questoes.dto.GabaritoResumo;
+import com.exame.ordem.questoes.dto.QuestaoResumo;
 import com.exame.ordem.questoes.internal.Alternativa;
 import com.exame.ordem.questoes.internal.AlternativaRepository;
 import com.exame.ordem.questoes.internal.Prova;
@@ -21,7 +21,6 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
     private final ProvaRepository provaRepository;
     private final QuestaoRepository questaoRepository;
     private final AlternativaRepository alternativaRepository;
-
 
     QuestoesQueryServiceImpl(ProvaRepository provaRepository, QuestaoRepository questaoRepository, AlternativaRepository alternativaRepository) {
         this.provaRepository = provaRepository;
@@ -45,6 +44,20 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Alternativa " + alternativaId + " não pertence à questão " + questaoId));
         return alternativa.isEhCorreta();
+    }
+
+    @Override
+    public List<GabaritoResumo> buscarGabarito(List<Integer> questaoIds) {
+        return questaoRepository.findByIdIn(questaoIds).stream()
+                .map(q -> {
+                    Long corretaId = q.getAlternativas().stream()
+                            .filter(Alternativa::isEhCorreta)
+                            .findFirst()
+                            .map(Alternativa::getId)
+                            .orElse(null); // null = questão anulada, sem gabarito
+                    return new GabaritoResumo(q.getId(), corretaId);
+                })
+                .toList();
     }
 
     private List<QuestaoResumo> toResumo(List<Questao> questoes) {
