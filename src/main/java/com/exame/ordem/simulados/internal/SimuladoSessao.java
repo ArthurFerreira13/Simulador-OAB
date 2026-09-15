@@ -61,4 +61,19 @@ public class SimuladoSessao {
     public Integer getTempoLimiteSegundos() { return tempoLimiteSegundos; }
     public LocalDateTime getIniciadoEm() { return iniciadoEm; }
     public LocalDateTime getFinalizadoEm() { return finalizadoEm; }
+
+    public void abandonar() {
+        this.status = StatusSessao.ABANDONADO;
+        this.finalizadoEm = LocalDateTime.now(ZoneOffset.UTC);
+    }
+
+    public boolean tempoExpirado() {
+        if (status != StatusSessao.EM_ANDAMENTO) {
+            return false;
+        }
+        LocalDateTime limite = iniciadoEm.plusSeconds(tempoLimiteSegundos);
+        return LocalDateTime.now(ZoneOffset.UTC).isAfter(limite);
+    }
+
+
 }

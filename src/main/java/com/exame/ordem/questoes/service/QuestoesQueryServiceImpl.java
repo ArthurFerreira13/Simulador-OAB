@@ -29,6 +29,11 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
     }
 
     @Override
+    public List<QuestaoResumo> buscarPorIds(List<Integer> questaoIds) {
+        return toResumo(questaoRepository.findByIdInComAlternativas(questaoIds));
+    }
+
+    @Override
     public List<QuestaoResumo> buscarQuestoesPorProva(int numeroProva) {
         Prova prova = provaRepository.findAll().stream()
                 .filter(p -> Integer.valueOf(numeroProva).equals(NumeroProvaExtractor.extrair(p.getTitulo())))
@@ -64,7 +69,7 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
         return questoes.stream()
                 .map(q -> new QuestaoResumo(
                         q.getId(), q.getProva().getId(), q.getNumero(), q.getEnunciado(), q.isAnulada(),
-                        q.getAlternativas().stream()
+                        q.getAlternativas(), q.getDisciplina().stream()
                                 .map(a -> new AlternativaResumo(a.getId(), a.getLetra(), a.getTexto()))
                                 .toList()))
                 .toList();

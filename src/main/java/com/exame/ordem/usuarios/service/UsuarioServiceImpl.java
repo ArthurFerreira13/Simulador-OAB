@@ -26,7 +26,7 @@ class UsuarioServiceImpl implements UsuarioService {
         String hash = passwordEncoder.encode(request.senha());
         Usuario usuario = Usuario.criarComSenha(request.email(), hash, request.nome());
         usuario = usuarioRepository.save(usuario);
-        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(), usuario.getDataProvaAlvo());
+        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(), usuario.getDataProvaAlvo(), usuario.getCriadoEm());
     }
 
     @Override
@@ -67,6 +67,6 @@ class UsuarioServiceImpl implements UsuarioService {
     @Override
     public UsuarioResumo consultarPerfil(String email, String senha) {
         Usuario usuario = autenticarOuFalhar(email, senha);
-        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(), usuario.getDataProvaAlvo());
+        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(), usuario.getDataProvaAlvo(), usuario.getCriadoEm());
     }
 }

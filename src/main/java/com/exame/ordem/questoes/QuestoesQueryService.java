@@ -9,4 +9,5 @@ public interface QuestoesQueryService {
     List<QuestaoResumo> buscarQuestoesPorProva(int numeroProva);
     boolean verificarResposta(int questaoId, Long alternativaId);
     List<GabaritoResumo> buscarGabarito(List<Integer> questaoIds);
+    List<QuestaoResumo> buscarPorIds(List<Integer> questaoIds);
 }

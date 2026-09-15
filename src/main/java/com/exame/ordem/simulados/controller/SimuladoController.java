@@ -58,4 +58,17 @@ public class SimuladoController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @GetMapping("/ativa")
+    public ResponseEntity<SessaoDTO> sessaoAtiva(@RequestParam String email, @RequestParam String senha) {
+        try {
+            return ResponseEntity.ok(simuladoService.consultarSessaoAtiva(email, senha));
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+    }
 }

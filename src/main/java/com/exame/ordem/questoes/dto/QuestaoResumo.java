@@ -8,4 +8,6 @@ public record QuestaoResumo(
         String enunciado,
         boolean anulada,
         List<AlternativaResumo> alternativas
-) {}
+) {
+
+}

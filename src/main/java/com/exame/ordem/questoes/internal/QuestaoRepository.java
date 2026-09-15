@@ -17,4 +17,11 @@ public interface QuestaoRepository extends JpaRepository<Questao, Integer> {
     List<Questao> findByProvaIdComAlternativas(@Param("provaId") Integer provaId);
 
     List<Questao> findByIdIn(List<Integer> ids);
+    @Query("""
+    SELECT DISTINCT q FROM Questao q
+    JOIN FETCH q.alternativas a
+    WHERE q.id IN :ids
+    ORDER BY q.numero ASC, a.letra ASC
+    """)
+    List<Questao> findByIdInComAlternativas(@Param("ids") List<Integer> ids);
 }
