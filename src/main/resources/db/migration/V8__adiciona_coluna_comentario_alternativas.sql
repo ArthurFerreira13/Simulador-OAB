@@ -1,0 +1,1 @@
+ALTER TABLE alternativas ADD COLUMN comentario TEXT;

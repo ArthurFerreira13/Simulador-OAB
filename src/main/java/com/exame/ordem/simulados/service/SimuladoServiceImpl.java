@@ -3,6 +3,7 @@ package com.exame.ordem.simulados.service;
 import com.exame.ordem.questoes.QuestoesQueryService;
 import com.exame.ordem.questoes.dto.GabaritoResumo;
 import com.exame.ordem.questoes.dto.QuestaoResumo;
+import com.exame.ordem.questoes.dto.QuestaoRevisadaDTO;
 import com.exame.ordem.simulados.SimuladoService;
 import com.exame.ordem.simulados.dto.*;
 import com.exame.ordem.simulados.internal.*;
@@ -16,6 +17,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -33,19 +35,22 @@ class SimuladoServiceImpl implements SimuladoService {
     private final ResultadoSimuladoRepository resultadoRepository;
     private final QuestoesQueryService questoesQueryService;
     private final UsuarioService usuarioService;
+    private final SessaoAbandonoHelper sessaoAbandonoHelper;
 
     SimuladoServiceImpl(SimuladoSessaoRepository sessaoRepository,
                         SimuladoSessaoQuestaoRepository sessaoQuestaoRepository,
                         RespostaSimuladoRepository respostaRepository,
                         ResultadoSimuladoRepository resultadoRepository,
                         QuestoesQueryService questoesQueryService,
-                        UsuarioService usuarioService) {
+                        UsuarioService usuarioService,
+                        SessaoAbandonoHelper sessaoAbandonoHelper) {
         this.sessaoRepository = sessaoRepository;
         this.sessaoQuestaoRepository = sessaoQuestaoRepository;
         this.respostaRepository = respostaRepository;
         this.resultadoRepository = resultadoRepository;
         this.questoesQueryService = questoesQueryService;
         this.usuarioService = usuarioService;
+        this.sessaoAbandonoHelper = sessaoAbandonoHelper;
     }
 
     @Override
@@ -56,8 +61,7 @@ class SimuladoServiceImpl implements SimuladoService {
         sessaoRepository.findByUsuarioIdAndStatus(usuario.id(), StatusSessao.EM_ANDAMENTO)
                 .ifPresent(s -> {
                     if (s.tempoExpirado()) {
-                        s.abandonar();
-                        sessaoRepository.save(s);
+                        sessaoAbandonoHelper.abandonarSeExpirada(s.getId());
                     } else {
                         throw new IllegalStateException("Já existe simulado em andamento.");
                     }
@@ -104,8 +108,7 @@ class SimuladoServiceImpl implements SimuladoService {
         }
 
         if (sessao.tempoExpirado()) {
-            sessao.abandonar();
-            sessaoRepository.save(sessao);
+            sessaoAbandonoHelper.abandonarSeExpirada(sessao.getId());
             throw new IllegalStateException("Tempo da sessão expirado. Sessão marcada como abandonada.");
         }
 
@@ -129,8 +132,9 @@ class SimuladoServiceImpl implements SimuladoService {
         List<SimuladoSessaoQuestao> questoesDaSessao = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId);
         List<Integer> questaoIds = questoesDaSessao.stream().map(SimuladoSessaoQuestao::getQuestaoId).toList();
 
-        Map<Integer, Long> gabarito = questoesQueryService.buscarGabarito(questaoIds).stream()
-                .collect(Collectors.toMap(GabaritoResumo::questaoId, GabaritoResumo::alternativaCorretaId, (a, b) -> a));
+        Map<Integer, Long> gabarito = new HashMap<>();
+        questoesQueryService.buscarGabarito(questaoIds)
+                .forEach(g -> gabarito.put(g.questaoId(), g.alternativaCorretaId()));
 
         Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
                 .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
@@ -162,7 +166,8 @@ class SimuladoServiceImpl implements SimuladoService {
                 sessaoId, total, acertos, erros, brancos, percentual, aprovado, (int) sessao.tempoGastoSegundos());
         resultadoRepository.save(resultado);
 
-        return toResultadoDTO(resultado);
+        List<QuestaoRevisadaDTO> revisao = montarRevisao(questaoIds, respostas);
+        return toResultadoDTO(resultado, revisao);
     }
 
     @Override
@@ -174,8 +179,7 @@ class SimuladoServiceImpl implements SimuladoService {
                 .orElseThrow(() -> new IllegalArgumentException("Nenhum simulado em andamento."));
 
         if (sessao.tempoExpirado()) {
-            sessao.abandonar();
-            sessaoRepository.save(sessao);
+            sessaoAbandonoHelper.abandonarSeExpirada(sessao.getId());
             throw new IllegalArgumentException("Nenhum simulado em andamento.");
         }
 
@@ -193,7 +197,15 @@ class SimuladoServiceImpl implements SimuladoService {
     public ResultadoDTO consultarResultado(Long sessaoId) {
         ResultadoSimulado resultado = resultadoRepository.findBySessaoId(sessaoId)
                 .orElseThrow(() -> new IllegalArgumentException("Resultado ainda não calculado."));
-        return toResultadoDTO(resultado);
+
+        List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
+                .map(SimuladoSessaoQuestao::getQuestaoId)
+                .toList();
+
+        Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
+                .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
+
+        return toResultadoDTO(resultado, montarRevisao(questaoIds, respostas));
     }
 
     private SessaoDTO montarSessaoDTO(SimuladoSessao sessao, List<QuestaoResumo> questoes, Map<Integer, Long> respostas) {
@@ -208,8 +220,19 @@ class SimuladoServiceImpl implements SimuladoService {
         return new SessaoDTO(sessao.getId(), sessao.getStatus().name(), sessao.getTempoLimiteSegundos(), sessao.getIniciadoEm(), dto);
     }
 
-    private ResultadoDTO toResultadoDTO(ResultadoSimulado r) {
+    private List<QuestaoRevisadaDTO> montarRevisao(List<Integer> questaoIds, Map<Integer, Long> respostas) {
+        return questoesQueryService.buscarComGabarito(questaoIds).stream()
+                .map(q -> {
+                    Long escolhida = respostas.get(q.questaoId());
+                    boolean correta = q.alternativas().stream()
+                            .anyMatch(a -> a.ehCorreta() && a.id().equals(escolhida));
+                    return new QuestaoRevisadaDTO(q, escolhida, correta);
+                })
+                .toList();
+    }
+
+    private ResultadoDTO toResultadoDTO(ResultadoSimulado r, List<QuestaoRevisadaDTO> revisao) {
         return new ResultadoDTO(r.getTotalQuestoes(), r.getAcertos(), r.getErros(), r.getBrancos(),
-                r.getPercentualAcerto(), r.isAprovado(), r.getTempoGastoSegundos());
+                r.getPercentualAcerto(), r.isAprovado(), r.getTempoGastoSegundos(), revisao);
     }
 }

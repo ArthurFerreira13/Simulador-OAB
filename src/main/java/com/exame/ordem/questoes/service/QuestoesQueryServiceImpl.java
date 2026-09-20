@@ -2,9 +2,7 @@ package com.exame.ordem.questoes.service;
 
 import com.exame.ordem.questoes.NumeroProvaExtractor;
 import com.exame.ordem.questoes.QuestoesQueryService;
-import com.exame.ordem.questoes.dto.AlternativaResumo;
-import com.exame.ordem.questoes.dto.GabaritoResumo;
-import com.exame.ordem.questoes.dto.QuestaoResumo;
+import com.exame.ordem.questoes.dto.*;
 import com.exame.ordem.questoes.internal.Alternativa;
 import com.exame.ordem.questoes.internal.AlternativaRepository;
 import com.exame.ordem.questoes.internal.Prova;
@@ -12,64 +10,109 @@ import com.exame.ordem.questoes.internal.ProvaRepository;
 import com.exame.ordem.questoes.internal.Questao;
 import com.exame.ordem.questoes.internal.QuestaoRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * Serviço de consulta de questões — SOMENTE LEITURA.
+ * readOnly = true garante que o Hibernate não dispare flush nem UPDATE
+ * por dirty checking, mesmo que alguém suje uma entidade por engano.
+ */
 @Service
+@Transactional(readOnly = true)
 class QuestoesQueryServiceImpl implements QuestoesQueryService {
 
     private final ProvaRepository provaRepository;
     private final QuestaoRepository questaoRepository;
     private final AlternativaRepository alternativaRepository;
 
-    QuestoesQueryServiceImpl(ProvaRepository provaRepository, QuestaoRepository questaoRepository, AlternativaRepository alternativaRepository) {
+    QuestoesQueryServiceImpl(ProvaRepository provaRepository,
+                             QuestaoRepository questaoRepository,
+                             AlternativaRepository alternativaRepository) {
         this.provaRepository = provaRepository;
         this.questaoRepository = questaoRepository;
         this.alternativaRepository = alternativaRepository;
     }
 
     @Override
-    public List<QuestaoResumo> buscarPorIds(List<Integer> questaoIds) {
-        return toResumo(questaoRepository.findByIdInComAlternativas(questaoIds));
-    }
-
-    @Override
     public List<QuestaoResumo> buscarQuestoesPorProva(int numeroProva) {
         Prova prova = provaRepository.findAll().stream()
-                .filter(p -> Integer.valueOf(numeroProva).equals(NumeroProvaExtractor.extrair(p.getTitulo())))
+                .filter(p -> numeroProva == java.util.Objects.requireNonNullElse(
+                        NumeroProvaExtractor.extrair(p.getTitulo()), -1))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Prova " + numeroProva + " não encontrada."));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Prova não encontrada para o número " + numeroProva));
 
-        return toResumo(questaoRepository.findByProvaIdComAlternativas(prova.getId()));
+        return mapearQuestoes(questaoRepository.findByProvaIdComAlternativas(prova.getId()));
     }
 
     @Override
-    public boolean verificarResposta(int questaoId, Long alternativaId) {
-        Alternativa alternativa = alternativaRepository.findByIdAndQuestaoId(alternativaId, questaoId)
+    public RespostaDetalhadaDTO verificarResposta(int questaoId, Long alternativaId) {
+        Questao questao = questaoRepository.findByIdInComAlternativas(List.of(questaoId)).stream()
+                .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Alternativa " + alternativaId + " não pertence à questão " + questaoId));
-        return alternativa.isEhCorreta();
+                        "Questão " + questaoId + " não encontrada"));
+
+        Alternativa escolhida = questao.getAlternativas().stream()
+                .filter(a -> a.getId().equals(alternativaId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Alternativa " + alternativaId + " não encontrada para a questão " + questaoId));
+
+        List<AlternativaComGabarito> alternativas = questao.getAlternativas().stream()
+                .map(a -> new AlternativaComGabarito(
+                        a.getId(), a.getLetra(), a.getTexto(), a.getComentario(), a.isEhCorreta()))
+                .toList();
+
+        return new RespostaDetalhadaDTO(questaoId, alternativaId, escolhida.isEhCorreta(), alternativas);
     }
 
     @Override
     public List<GabaritoResumo> buscarGabarito(List<Integer> questaoIds) {
-        return questaoRepository.findByIdIn(questaoIds).stream()
-                .map(q -> {
-                    Long corretaId = q.getAlternativas().stream()
-                            .filter(Alternativa::isEhCorreta)
-                            .findFirst()
-                            .map(Alternativa::getId)
-                            .orElse(null); // null = questão anulada, sem gabarito
-                    return new GabaritoResumo(q.getId(), corretaId);
-                })
+        return questaoRepository.findByIdInComAlternativas(questaoIds).stream()
+                .map(q -> new GabaritoResumo(
+                        q.getId(),
+                        q.getAlternativas().stream()
+                                .filter(Alternativa::isEhCorreta)
+                                .map(Alternativa::getId)
+                                .findFirst()
+                                .orElse(null)))
                 .toList();
     }
 
-    private List<QuestaoResumo> toResumo(List<Questao> questoes) {
+    @Override
+    public List<QuestaoResumo> buscarPorIds(List<Integer> questaoIds) {
+        return mapearQuestoes(questaoRepository.findByIdInComAlternativas(questaoIds));
+    }
+
+    @Override
+    public List<QuestaoResumo> buscarQuestoesPorDisciplina(Long disciplinaId) {
+        return mapearQuestoes(questaoRepository.findByDisciplinaIdComAlternativas(disciplinaId));
+    }
+
+    @Override
+    public List<QuestaoComGabaritoDTO> buscarComGabarito(List<Integer> questaoIds) {
+        return questaoRepository.findByIdInComAlternativas(questaoIds).stream()
+                .map(q -> new QuestaoComGabaritoDTO(
+                        q.getId(),
+                        q.getNumero(),
+                        q.getEnunciado(),
+                        q.isAnulada(),
+                        q.getDisciplina() != null ? q.getDisciplina().getNome() : null,
+                        q.getAlternativas().stream()
+                                .map(a -> new AlternativaComGabarito(
+                                        a.getId(), a.getLetra(), a.getTexto(), a.getComentario(), a.isEhCorreta()))
+                                .toList()))
+                .toList();
+    }
+
+    private List<QuestaoResumo> mapearQuestoes(List<Questao> questoes) {
         return questoes.stream()
                 .map(q -> new QuestaoResumo(
                         q.getId(), q.getProva().getId(), q.getNumero(), q.getEnunciado(), q.isAnulada(),
-                        q.getAlternativas(), q.getDisciplina().stream()
+                        q.getDisciplina() != null ? q.getDisciplina().getNome() : null,
+                        q.getAlternativas().stream()
                                 .map(a -> new AlternativaResumo(a.getId(), a.getLetra(), a.getTexto()))
                                 .toList()))
                 .toList();

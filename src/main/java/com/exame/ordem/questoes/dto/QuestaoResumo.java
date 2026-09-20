@@ -7,7 +7,6 @@ public record QuestaoResumo(
         int numero,
         String enunciado,
         boolean anulada,
+        String disciplina,
         List<AlternativaResumo> alternativas
-) {
-
-}
+) {}

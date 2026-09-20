@@ -19,56 +19,46 @@ public class SimuladoController {
 
     @PostMapping("/iniciar")
     public ResponseEntity<SessaoDTO> iniciar(@Valid @RequestBody IniciarSimuladoRequest request) {
-        try {
-            return ResponseEntity.status(HttpStatus.CREATED).body(simuladoService.iniciarSimulado(request));
-        } catch (SecurityException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).build();
-        }
+        return ResponseEntity.status(HttpStatus.CREATED).body(simuladoService.iniciarSimulado(request));
     }
 
     @PutMapping("/{sessaoId}/questoes/{questaoId}/resposta")
     public ResponseEntity<Void> responder(@PathVariable Long sessaoId, @PathVariable int questaoId,
                                           @Valid @RequestBody ResponderQuestaoRequest request) {
-        try {
-            simuladoService.responderQuestao(sessaoId, questaoId, request);
-            return ResponseEntity.noContent().build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).build();
-        }
+        simuladoService.responderQuestao(sessaoId, questaoId, request);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{sessaoId}/finalizar")
     public ResponseEntity<ResultadoDTO> finalizar(@PathVariable Long sessaoId) {
-        try {
-            return ResponseEntity.ok(simuladoService.finalizarSimulado(sessaoId));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        }
+        return ResponseEntity.ok(simuladoService.finalizarSimulado(sessaoId));
     }
 
     @GetMapping("/{sessaoId}/resultado")
     public ResponseEntity<ResultadoDTO> resultado(@PathVariable Long sessaoId) {
-        try {
-            return ResponseEntity.ok(simuladoService.consultarResultado(sessaoId));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        }
+        return ResponseEntity.ok(simuladoService.consultarResultado(sessaoId));
     }
 
     @GetMapping("/ativa")
     public ResponseEntity<SessaoDTO> sessaoAtiva(@RequestParam String email, @RequestParam String senha) {
-        try {
-            return ResponseEntity.ok(simuladoService.consultarSessaoAtiva(email, senha));
-        } catch (SecurityException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
-        }
+        return ResponseEntity.ok(simuladoService.consultarSessaoAtiva(email, senha));
+    }
+
+    @ExceptionHandler(SecurityException.class)
+    public ResponseEntity<ErroDTO> tratarSecurityException(SecurityException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ErroDTO("NAO_AUTORIZADO", e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErroDTO> tratarIllegalArgumentException(IllegalArgumentException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErroDTO("RECURSO_NAO_ENCONTRADO", e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ErroDTO> tratarIllegalStateException(IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErroDTO("CONFLITO_DE_ESTADO", e.getMessage()));
     }
 }

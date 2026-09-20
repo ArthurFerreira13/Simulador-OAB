@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -17,7 +18,9 @@ import org.hibernate.type.SqlTypes;
  * O campo ehCorreta é exposto via getter/isEhCorreta para permitir a leitura
  * do gabarito.
  */
+
 @Entity
+@Immutable
 @Table(name = "alternativas")
 public class Alternativa {
 
@@ -35,6 +38,9 @@ public class Alternativa {
 
     @Column(name = "texto", columnDefinition = "text", nullable = false)
     private String texto;
+
+    @Column(columnDefinition = "TEXT")
+    private String comentario;
 
     @Column(name = "eh_correta", nullable = false)
     private Boolean ehCorreta;
@@ -62,4 +68,13 @@ public class Alternativa {
     public boolean isEhCorreta() {
         return Boolean.TRUE.equals(ehCorreta);
     }
+
+    public String getComentario() {
+        return comentario;
+    }
+
+    public void setComentario(String comentario) {
+        this.comentario = comentario;
+    }
+
 }
