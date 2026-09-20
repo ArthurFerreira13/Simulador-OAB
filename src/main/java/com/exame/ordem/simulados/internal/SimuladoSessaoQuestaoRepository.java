@@ -5,4 +5,5 @@ import java.util.List;
 
 public interface SimuladoSessaoQuestaoRepository extends JpaRepository<SimuladoSessaoQuestao, Long> {
     List<SimuladoSessaoQuestao> findBySessaoIdOrderByOrdemAsc(Long sessaoId);
+    boolean existsBySessaoIdAndQuestaoId(Long sessaoId, Integer questaoId);
 }

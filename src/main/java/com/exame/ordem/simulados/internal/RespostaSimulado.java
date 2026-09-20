@@ -4,6 +4,12 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
+/**
+ * Resposta de um usuário a uma questão de uma sessão de simulado.
+ *
+ * Apenas alternativaId e respondidoEm podem mudar (troca de resposta).
+ * sessaoId e questaoId são imutáveis após a criação.
+ */
 @Entity
 @Table(name = "resposta_simulado")
 public class RespostaSimulado {
@@ -12,10 +18,10 @@ public class RespostaSimulado {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "sessao_id", nullable = false)
+    @Column(name = "sessao_id", nullable = false, updatable = false)
     private Long sessaoId;
 
-    @Column(name = "questao_id", nullable = false)
+    @Column(name = "questao_id", nullable = false, updatable = false)
     private Integer questaoId;
 
     @Column(name = "alternativa_id")
@@ -41,4 +47,5 @@ public class RespostaSimulado {
     public Long getSessaoId() { return sessaoId; }
     public Integer getQuestaoId() { return questaoId; }
     public Long getAlternativaId() { return alternativaId; }
+    public LocalDateTime getRespondidoEm() { return respondidoEm; }
 }

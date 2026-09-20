@@ -1,11 +1,20 @@
 package com.exame.ordem.simulados.internal;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.Immutable;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
+/**
+ * Entidade IMUTÁVEL: resultado consolidado de um simulado.
+ *
+ * Criado uma única vez, no momento da finalização, e nunca mais alterado.
+ * O Hibernate ignora qualquer UPDATE (via @Immutable).
+ */
 @Entity
+@Immutable
 @Table(name = "resultado_simulado")
 public class ResultadoSimulado {
 
@@ -13,31 +22,31 @@ public class ResultadoSimulado {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "sessao_id", nullable = false, unique = true)
+    @Column(name = "sessao_id", nullable = false, unique = true, updatable = false)
     private Long sessaoId;
 
-    @Column(name = "total_questoes", nullable = false)
+    @Column(name = "total_questoes", nullable = false, updatable = false)
     private Integer totalQuestoes;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private Integer acertos;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private Integer erros;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private Integer brancos;
 
-    @Column(name = "percentual_acerto", nullable = false)
+    @Column(name = "percentual_acerto", nullable = false, updatable = false)
     private BigDecimal percentualAcerto;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private boolean aprovado;
 
-    @Column(name = "tempo_gasto_segundos", nullable = false)
+    @Column(name = "tempo_gasto_segundos", nullable = false, updatable = false)
     private Integer tempoGastoSegundos;
 
-    @Column(name = "calculado_em", nullable = false)
+    @Column(name = "calculado_em", nullable = false, updatable = false)
     private LocalDateTime calculadoEm = LocalDateTime.now(ZoneOffset.UTC);
 
     protected ResultadoSimulado() {}
@@ -54,6 +63,7 @@ public class ResultadoSimulado {
         this.tempoGastoSegundos = tempoGastoSegundos;
     }
 
+    public Long getId() { return id; }
     public Long getSessaoId() { return sessaoId; }
     public Integer getTotalQuestoes() { return totalQuestoes; }
     public Integer getAcertos() { return acertos; }

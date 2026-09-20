@@ -8,12 +8,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 @Service
-public class AdministradorServiceImpl implements AdministradorService {
+class AdministradorServiceImpl implements AdministradorService {
 
     private final AdministradorRepository repository;
     private final PasswordEncoder passwordEncoder;
 
-    public AdministradorServiceImpl(AdministradorRepository repository, PasswordEncoder passwordEncoder) {
+    AdministradorServiceImpl(AdministradorRepository repository, PasswordEncoder passwordEncoder) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
     }

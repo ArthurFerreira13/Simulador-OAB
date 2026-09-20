@@ -14,4 +14,5 @@ public interface QuestoesQueryService {
     List<QuestaoResumo> buscarPorIds(List<Integer> questaoIds);
     List<QuestaoResumo> buscarQuestoesPorDisciplina(Long disciplinaId);
     List<QuestaoComGabaritoDTO> buscarComGabarito(List<Integer> questaoIds);
+    boolean existeAlternativaNaQuestao(int questaoId, Long alternativaId);
 }

@@ -112,6 +112,18 @@ class SimuladoServiceImpl implements SimuladoService {
             throw new IllegalStateException("Tempo da sessão expirado. Sessão marcada como abandonada.");
         }
 
+        // Valida que a questão pertence a esta sessão (query EXISTS — O(1) com índice)
+        if (!sessaoQuestaoRepository.existsBySessaoIdAndQuestaoId(sessaoId, questaoId)) {
+            throw new IllegalArgumentException(
+                    "Questão " + questaoId + " não pertence à sessão " + sessaoId + ".");
+        }
+
+        // Valida que a alternativa pertence à questão (query EXISTS — O(1) com índice)
+        if (!questoesQueryService.existeAlternativaNaQuestao(questaoId, request.alternativaId())) {
+            throw new IllegalArgumentException(
+                    "Alternativa " + request.alternativaId() + " não pertence à questão " + questaoId + ".");
+        }
+
         respostaRepository.findBySessaoIdAndQuestaoId(sessaoId, questaoId)
                 .ifPresentOrElse(
                         r -> r.atualizarResposta(request.alternativaId()),
@@ -171,7 +183,7 @@ class SimuladoServiceImpl implements SimuladoService {
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public SessaoDTO consultarSessaoAtiva(String email, String senha) {
         UsuarioResumo usuario = usuarioService.consultarPerfil(email, senha);
 
@@ -194,6 +206,7 @@ class SimuladoServiceImpl implements SimuladoService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ResultadoDTO consultarResultado(Long sessaoId) {
         ResultadoSimulado resultado = resultadoRepository.findBySessaoId(sessaoId)
                 .orElseThrow(() -> new IllegalArgumentException("Resultado ainda não calculado."));

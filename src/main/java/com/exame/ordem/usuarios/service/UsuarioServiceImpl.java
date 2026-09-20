@@ -5,17 +5,18 @@ import com.exame.ordem.usuarios.dto.*;
 import com.exame.ordem.usuarios.internal.ProvedorAuth;
 import com.exame.ordem.usuarios.internal.Usuario;
 import com.exame.ordem.usuarios.internal.UsuarioRepository;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 @Service
 class UsuarioServiceImpl implements UsuarioService {
 
     private final UsuarioRepository usuarioRepository;
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    private final PasswordEncoder passwordEncoder;
 
-    UsuarioServiceImpl(UsuarioRepository usuarioRepository) {
+    UsuarioServiceImpl(UsuarioRepository usuarioRepository, PasswordEncoder passwordEncoder) {
         this.usuarioRepository = usuarioRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -26,7 +27,8 @@ class UsuarioServiceImpl implements UsuarioService {
         String hash = passwordEncoder.encode(request.senha());
         Usuario usuario = Usuario.criarComSenha(request.email(), hash, request.nome());
         usuario = usuarioRepository.save(usuario);
-        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(), usuario.getDataProvaAlvo(), usuario.getCriadoEm());
+        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(),
+                usuario.getDataProvaAlvo(), usuario.getCriadoEm());
     }
 
     @Override
@@ -49,6 +51,13 @@ class UsuarioServiceImpl implements UsuarioService {
         usuarioRepository.delete(usuario);
     }
 
+    @Override
+    public UsuarioResumo consultarPerfil(String email, String senha) {
+        Usuario usuario = autenticarOuFalhar(email, senha);
+        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(),
+                usuario.getDataProvaAlvo(), usuario.getCriadoEm());
+    }
+
     private Usuario autenticarOuFalhar(String email, String senha) {
         Usuario usuario = usuarioRepository.findByEmail(email)
                 .orElseThrow(() -> new SecurityException("Credenciais inválidas."));
@@ -63,10 +72,5 @@ class UsuarioServiceImpl implements UsuarioService {
             throw new SecurityException("Credenciais inválidas.");
         }
         return usuario;
-    }
-    @Override
-    public UsuarioResumo consultarPerfil(String email, String senha) {
-        Usuario usuario = autenticarOuFalhar(email, senha);
-        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(), usuario.getDataProvaAlvo(), usuario.getCriadoEm());
     }
 }

@@ -69,6 +69,11 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
     }
 
     @Override
+    public boolean existeAlternativaNaQuestao(int questaoId, Long alternativaId) {
+        return alternativaRepository.findByIdAndQuestaoId(alternativaId, questaoId).isPresent();
+    }
+
+    @Override
     public List<GabaritoResumo> buscarGabarito(List<Integer> questaoIds) {
         return questaoRepository.findByIdInComAlternativas(questaoIds).stream()
                 .map(q -> new GabaritoResumo(
@@ -90,6 +95,7 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
     public List<QuestaoResumo> buscarQuestoesPorDisciplina(Long disciplinaId) {
         return mapearQuestoes(questaoRepository.findByDisciplinaIdComAlternativas(disciplinaId));
     }
+
 
     @Override
     public List<QuestaoComGabaritoDTO> buscarComGabarito(List<Integer> questaoIds) {
