@@ -5,6 +5,7 @@ import com.exame.ordem.questoes.QuestoesQueryService;
 import com.exame.ordem.questoes.dto.*;
 import com.exame.ordem.questoes.internal.Alternativa;
 import com.exame.ordem.questoes.internal.AlternativaRepository;
+import com.exame.ordem.questoes.internal.DisciplinaRepository;
 import com.exame.ordem.questoes.internal.Prova;
 import com.exame.ordem.questoes.internal.ProvaRepository;
 import com.exame.ordem.questoes.internal.Questao;
@@ -26,13 +27,16 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
     private final ProvaRepository provaRepository;
     private final QuestaoRepository questaoRepository;
     private final AlternativaRepository alternativaRepository;
+    private final DisciplinaRepository disciplinaRepository;
 
     QuestoesQueryServiceImpl(ProvaRepository provaRepository,
                              QuestaoRepository questaoRepository,
-                             AlternativaRepository alternativaRepository) {
+                             AlternativaRepository alternativaRepository,
+                             DisciplinaRepository disciplinaRepository) {
         this.provaRepository = provaRepository;
         this.questaoRepository = questaoRepository;
         this.alternativaRepository = alternativaRepository;
+        this.disciplinaRepository = disciplinaRepository;
     }
 
     @Override
@@ -96,7 +100,6 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
         return mapearQuestoes(questaoRepository.findByDisciplinaIdComAlternativas(disciplinaId));
     }
 
-
     @Override
     public List<QuestaoComGabaritoDTO> buscarComGabarito(List<Integer> questaoIds) {
         return questaoRepository.findByIdInComAlternativas(questaoIds).stream()
@@ -111,6 +114,37 @@ class QuestoesQueryServiceImpl implements QuestoesQueryService {
                                         a.getId(), a.getLetra(), a.getTexto(), a.getComentario(), a.isEhCorreta()))
                                 .toList()))
                 .toList();
+    }
+
+    @Override
+    public List<QuestaoResumo> buscarPorDisciplinaEAno(Long disciplinaId, Integer ano) {
+        return mapearQuestoes(
+                questaoRepository.findByDisciplinaEAnoComAlternativas(disciplinaId, ano));
+    }
+
+    // ==== novos ====
+
+    @Override
+    public List<ProvaResumo> listarProvas() {
+        return provaRepository.findAll().stream()
+                .map(p -> new ProvaResumo(p.getId(), p.getTitulo(), p.getAno()))
+                .toList();
+    }
+
+    @Override
+    public List<DisciplinaResumo> listarDisciplinas() {
+        return disciplinaRepository.findAll().stream()
+                .map(d -> new DisciplinaResumo(d.getId(), d.getNome()))
+                .toList();
+    }
+
+    @Override
+    public QuestaoResumo buscarQuestaoPorId(int questaoId) {
+        Questao q = questaoRepository.findByIdInComAlternativas(List.of(questaoId)).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Questão " + questaoId + " não encontrada"));
+        return mapearQuestoes(List.of(q)).get(0);
     }
 
     private List<QuestaoResumo> mapearQuestoes(List<Questao> questoes) {
