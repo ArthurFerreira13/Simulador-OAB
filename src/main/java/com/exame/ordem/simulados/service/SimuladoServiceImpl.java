@@ -221,16 +221,26 @@ class SimuladoServiceImpl implements SimuladoService {
         return toResultadoDTO(resultado, montarRevisao(questaoIds, respostas));
     }
 
-    private SessaoDTO montarSessaoDTO(SimuladoSessao sessao, List<QuestaoResumo> questoes, Map<Integer, Long> respostas) {
+    private SessaoDTO montarSessaoDTO(SimuladoSessao sessao,
+                                      List<QuestaoResumo> questoes,
+                                      Map<Integer, Long> respostas) {
+        Map<Integer, Boolean> revisaoPorQuestao = sessaoQuestaoRepository
+                .findBySessaoIdOrderByOrdemAsc(sessao.getId()).stream()
+                .collect(Collectors.toMap(
+                        SimuladoSessaoQuestao::getQuestaoId,
+                        SimuladoSessaoQuestao::isMarcadaRevisao));
+
         List<QuestaoSessaoDTO> dto = questoes.stream()
                 .map(q -> new QuestaoSessaoDTO(
                         q.id(), q.numero(), q.enunciado(), q.anulada(), q.disciplina(),
                         q.alternativas().stream()
                                 .map(a -> new AlternativaSessaoDTO(a.id(), a.letra(), a.texto()))
                                 .toList(),
-                        respostas.get(q.id())))
+                        respostas.get(q.id()),
+                        revisaoPorQuestao.getOrDefault(q.id(), false)))
                 .toList();
-        return new SessaoDTO(sessao.getId(), sessao.getStatus().name(), sessao.getTempoLimiteSegundos(), sessao.getIniciadoEm(), dto);
+        return new SessaoDTO(sessao.getId(), sessao.getStatus().name(),
+                sessao.getTempoLimiteSegundos(), sessao.getIniciadoEm(), dto);
     }
 
     private List<QuestaoRevisadaDTO> montarRevisao(List<Integer> questaoIds, Map<Integer, Long> respostas) {
@@ -242,6 +252,70 @@ class SimuladoServiceImpl implements SimuladoService {
                     return new QuestaoRevisadaDTO(q, escolhida, correta);
                 })
                 .toList();
+    }
+    // ================================================================
+    //  RF03.3 — Marcar / desmarcar questão para revisão
+    // ================================================================
+
+    @Override
+    @Transactional
+    public void marcarRevisao(Long sessaoId, int questaoId, Long usuarioId) {
+        SimuladoSessao sessao = buscarSessaoDoUsuario(sessaoId, usuarioId);
+        validarSessaoEmAndamento(sessao);
+
+        SimuladoSessaoQuestao vinculo = buscarVinculo(sessaoId, questaoId);
+        vinculo.marcarRevisao();
+        sessaoQuestaoRepository.save(vinculo);
+    }
+
+    @Override
+    @Transactional
+    public void desmarcarRevisao(Long sessaoId, int questaoId, Long usuarioId) {
+        SimuladoSessao sessao = buscarSessaoDoUsuario(sessaoId, usuarioId);
+        validarSessaoEmAndamento(sessao);
+
+        SimuladoSessaoQuestao vinculo = buscarVinculo(sessaoId, questaoId);
+        vinculo.desmarcarRevisao();
+        sessaoQuestaoRepository.save(vinculo);
+    }
+
+    // ================================================================
+    //  RF03.6 — Abandono manual
+    // ================================================================
+
+    @Override
+    @Transactional
+    public void abandonarSimulado(Long sessaoId, Long usuarioId) {
+        SimuladoSessao sessao = buscarSessaoDoUsuario(sessaoId, usuarioId);
+        validarSessaoEmAndamento(sessao);
+
+        sessao.abandonar();
+        sessaoRepository.save(sessao);
+    }
+
+    // ================================================================
+    //  Helpers privados
+    // ================================================================
+
+    private SimuladoSessao buscarSessaoDoUsuario(Long sessaoId, Long usuarioId) {
+        return sessaoRepository.findByIdAndUsuarioId(sessaoId, usuarioId)
+                .orElseThrow(() -> new IllegalArgumentException("Sessão não encontrada."));
+    }
+
+    private void validarSessaoEmAndamento(SimuladoSessao sessao) {
+        if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
+            throw new IllegalStateException("Sessão não está em andamento.");
+        }
+        if (sessao.tempoExpirado()) {
+            sessaoAbandonoHelper.abandonarSeExpirada(sessao.getId());
+            throw new IllegalStateException("Tempo da sessão expirado. Sessão marcada como abandonada.");
+        }
+    }
+
+    private SimuladoSessaoQuestao buscarVinculo(Long sessaoId, int questaoId) {
+        return sessaoQuestaoRepository.findBySessaoIdAndQuestaoId(sessaoId, questaoId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Questão " + questaoId + " não pertence à sessão " + sessaoId + "."));
     }
 
     private ResultadoDTO toResultadoDTO(ResultadoSimulado r, List<QuestaoRevisadaDTO> revisao) {

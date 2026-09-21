@@ -8,4 +8,7 @@ public interface SimuladoService {
     ResultadoDTO finalizarSimulado(Long sessaoId);
     ResultadoDTO consultarResultado(Long sessaoId);
     SessaoDTO consultarSessaoAtiva(String email, String senha);
+    void marcarRevisao(Long sessaoId, int questaoId, Long usuarioId);
+    void desmarcarRevisao(Long sessaoId, int questaoId, Long usuarioId);
+    void abandonarSimulado(Long sessaoId, Long usuarioId);
 }
