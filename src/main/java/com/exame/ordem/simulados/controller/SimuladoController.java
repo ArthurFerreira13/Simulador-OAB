@@ -2,6 +2,7 @@ package com.exame.ordem.simulados.controller;
 
 import com.exame.ordem.simulados.SimuladoService;
 import com.exame.ordem.simulados.dto.*;
+import com.exame.ordem.system.erro.excecoes.CredenciaisInvalidasException;
 import com.exame.ordem.usuarios.UsuarioService;
 import com.exame.ordem.usuarios.dto.UsuarioResumo;
 import jakarta.validation.Valid;
@@ -61,7 +62,7 @@ public class SimuladoController {
             @PathVariable Long sessaoId,
             @PathVariable int questaoId,
             @Valid @RequestBody CredenciaisRequest credenciais) {
-        UsuarioResumo usuario = usuarioService.consultarPerfil(credenciais.email(), credenciais.senha());
+        UsuarioResumo usuario = autenticar(credenciais.email(), credenciais.senha());
         simuladoService.marcarRevisao(sessaoId, questaoId, usuario.id());
         return ResponseEntity.noContent().build();
     }
@@ -72,7 +73,7 @@ public class SimuladoController {
             @PathVariable int questaoId,
             @RequestParam String email,
             @RequestParam String senha) {
-        UsuarioResumo usuario = usuarioService.consultarPerfil(email, senha);
+        UsuarioResumo usuario = autenticar(email, senha);
         simuladoService.desmarcarRevisao(sessaoId, questaoId, usuario.id());
         return ResponseEntity.noContent().build();
     }
@@ -85,30 +86,27 @@ public class SimuladoController {
     public ResponseEntity<Void> abandonar(
             @PathVariable Long sessaoId,
             @Valid @RequestBody CredenciaisRequest credenciais) {
-        UsuarioResumo usuario = usuarioService.consultarPerfil(credenciais.email(), credenciais.senha());
+        UsuarioResumo usuario = autenticar(credenciais.email(), credenciais.senha());
         simuladoService.abandonarSimulado(sessaoId, usuario.id());
         return ResponseEntity.noContent().build();
     }
 
     // ================================================================
-    //  Exception handlers
+    //  Autenticação temporária (até JWT entrar)
     // ================================================================
 
-    @ExceptionHandler(SecurityException.class)
-    public ResponseEntity<ErroDTO> tratarSecurityException(SecurityException e) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(new ErroDTO("NAO_AUTORIZADO", e.getMessage()));
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ErroDTO> tratarIllegalArgumentException(IllegalArgumentException e) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErroDTO("RECURSO_NAO_ENCONTRADO", e.getMessage()));
-    }
-
-    @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<ErroDTO> tratarIllegalStateException(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(new ErroDTO("CONFLITO_DE_ESTADO", e.getMessage()));
+    /**
+     * Valida email/senha e retorna o usuário.
+     *
+     * Qualquer falha do UsuarioService é traduzida pra
+     * CredenciaisInvalidasException → o GlobalExceptionHandler
+     * converte pra HTTP 401 com { "codigo": "CREDENCIAIS_INVALIDAS" }.
+     */
+    private UsuarioResumo autenticar(String email, String senha) {
+        try {
+            return usuarioService.consultarPerfil(email, senha);
+        } catch (RuntimeException e) {
+            throw new CredenciaisInvalidasException(e.getMessage());
+        }
     }
 }

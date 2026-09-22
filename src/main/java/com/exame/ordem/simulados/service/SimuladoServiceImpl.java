@@ -7,6 +7,9 @@ import com.exame.ordem.questoes.dto.QuestaoRevisadaDTO;
 import com.exame.ordem.simulados.SimuladoService;
 import com.exame.ordem.simulados.dto.*;
 import com.exame.ordem.simulados.internal.*;
+import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
+import com.exame.ordem.system.erro.excecoes.LimiteExcedidoException;
+import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
 import com.exame.ordem.usuarios.UsuarioService;
 import com.exame.ordem.usuarios.dto.UsuarioResumo;
 import org.springframework.stereotype.Service;
@@ -63,7 +66,7 @@ class SimuladoServiceImpl implements SimuladoService {
                     if (s.tempoExpirado()) {
                         sessaoAbandonoHelper.abandonarSeExpirada(s.getId());
                     } else {
-                        throw new IllegalStateException("Já existe simulado em andamento.");
+                        throw new ConflitoDeEstadoException("Já existe simulado em andamento.");
                     }
                 });
 
@@ -92,7 +95,7 @@ class SimuladoServiceImpl implements SimuladoService {
         LocalDateTime inicioDoDia = LocalDate.now(ZoneOffset.UTC).atStartOfDay();
         long simuladosHoje = sessaoRepository.countByUsuarioIdAndIniciadoEmAfter(usuario.id(), inicioDoDia);
         if (simuladosHoje >= 1) {
-            throw new IllegalStateException(
+            throw new LimiteExcedidoException(
                     "Limite diário de simulados atingido. Assine um plano para acesso ilimitado.");
         }
     }
@@ -101,26 +104,24 @@ class SimuladoServiceImpl implements SimuladoService {
     @Transactional
     public void responderQuestao(Long sessaoId, int questaoId, ResponderQuestaoRequest request) {
         SimuladoSessao sessao = sessaoRepository.findById(sessaoId)
-                .orElseThrow(() -> new IllegalArgumentException("Sessão não encontrada."));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Sessão não encontrada."));
 
         if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
-            throw new IllegalStateException("Sessão não está em andamento.");
+            throw new ConflitoDeEstadoException("Sessão não está em andamento.");
         }
 
         if (sessao.tempoExpirado()) {
             sessaoAbandonoHelper.abandonarSeExpirada(sessao.getId());
-            throw new IllegalStateException("Tempo da sessão expirado. Sessão marcada como abandonada.");
+            throw new ConflitoDeEstadoException("Tempo da sessão expirado. Sessão marcada como abandonada.");
         }
 
-        // Valida que a questão pertence a esta sessão (query EXISTS — O(1) com índice)
         if (!sessaoQuestaoRepository.existsBySessaoIdAndQuestaoId(sessaoId, questaoId)) {
-            throw new IllegalArgumentException(
+            throw new RecursoNaoEncontradoException(
                     "Questão " + questaoId + " não pertence à sessão " + sessaoId + ".");
         }
 
-        // Valida que a alternativa pertence à questão (query EXISTS — O(1) com índice)
         if (!questoesQueryService.existeAlternativaNaQuestao(questaoId, request.alternativaId())) {
-            throw new IllegalArgumentException(
+            throw new RecursoNaoEncontradoException(
                     "Alternativa " + request.alternativaId() + " não pertence à questão " + questaoId + ".");
         }
 
@@ -135,10 +136,10 @@ class SimuladoServiceImpl implements SimuladoService {
     @Transactional
     public ResultadoDTO finalizarSimulado(Long sessaoId) {
         SimuladoSessao sessao = sessaoRepository.findById(sessaoId)
-                .orElseThrow(() -> new IllegalArgumentException("Sessão não encontrada."));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Sessão não encontrada."));
 
         if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
-            throw new IllegalStateException("Esta sessão já foi finalizada.");
+            throw new ConflitoDeEstadoException("Esta sessão já foi finalizada.");
         }
 
         List<SimuladoSessaoQuestao> questoesDaSessao = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId);
@@ -188,11 +189,11 @@ class SimuladoServiceImpl implements SimuladoService {
         UsuarioResumo usuario = usuarioService.consultarPerfil(email, senha);
 
         SimuladoSessao sessao = sessaoRepository.findByUsuarioIdAndStatus(usuario.id(), StatusSessao.EM_ANDAMENTO)
-                .orElseThrow(() -> new IllegalArgumentException("Nenhum simulado em andamento."));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Nenhum simulado em andamento."));
 
         if (sessao.tempoExpirado()) {
             sessaoAbandonoHelper.abandonarSeExpirada(sessao.getId());
-            throw new IllegalArgumentException("Nenhum simulado em andamento.");
+            throw new RecursoNaoEncontradoException("Nenhum simulado em andamento.");
         }
 
         List<SimuladoSessaoQuestao> vinculos = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessao.getId());
@@ -209,7 +210,7 @@ class SimuladoServiceImpl implements SimuladoService {
     @Transactional(readOnly = true)
     public ResultadoDTO consultarResultado(Long sessaoId) {
         ResultadoSimulado resultado = resultadoRepository.findBySessaoId(sessaoId)
-                .orElseThrow(() -> new IllegalArgumentException("Resultado ainda não calculado."));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Resultado ainda não calculado."));
 
         List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
                 .map(SimuladoSessaoQuestao::getQuestaoId)
@@ -253,6 +254,7 @@ class SimuladoServiceImpl implements SimuladoService {
                 })
                 .toList();
     }
+
     // ================================================================
     //  RF03.3 — Marcar / desmarcar questão para revisão
     // ================================================================
@@ -299,22 +301,22 @@ class SimuladoServiceImpl implements SimuladoService {
 
     private SimuladoSessao buscarSessaoDoUsuario(Long sessaoId, Long usuarioId) {
         return sessaoRepository.findByIdAndUsuarioId(sessaoId, usuarioId)
-                .orElseThrow(() -> new IllegalArgumentException("Sessão não encontrada."));
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Sessão não encontrada."));
     }
 
     private void validarSessaoEmAndamento(SimuladoSessao sessao) {
         if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
-            throw new IllegalStateException("Sessão não está em andamento.");
+            throw new ConflitoDeEstadoException("Sessão não está em andamento.");
         }
         if (sessao.tempoExpirado()) {
             sessaoAbandonoHelper.abandonarSeExpirada(sessao.getId());
-            throw new IllegalStateException("Tempo da sessão expirado. Sessão marcada como abandonada.");
+            throw new ConflitoDeEstadoException("Tempo da sessão expirado. Sessão marcada como abandonada.");
         }
     }
 
     private SimuladoSessaoQuestao buscarVinculo(Long sessaoId, int questaoId) {
         return sessaoQuestaoRepository.findBySessaoIdAndQuestaoId(sessaoId, questaoId)
-                .orElseThrow(() -> new IllegalArgumentException(
+                .orElseThrow(() -> new RecursoNaoEncontradoException(
                         "Questão " + questaoId + " não pertence à sessão " + sessaoId + "."));
     }
 
