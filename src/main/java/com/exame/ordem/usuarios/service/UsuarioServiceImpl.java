@@ -1,5 +1,8 @@
 package com.exame.ordem.usuarios.service;
 
+import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
+import com.exame.ordem.system.erro.excecoes.CredenciaisInvalidasException;
+import com.exame.ordem.system.erro.excecoes.RegraDeNegocioException;
 import com.exame.ordem.usuarios.UsuarioService;
 import com.exame.ordem.usuarios.dto.*;
 import com.exame.ordem.usuarios.internal.ProvedorAuth;
@@ -22,7 +25,7 @@ class UsuarioServiceImpl implements UsuarioService {
     @Override
     public UsuarioResumo cadastrar(CadastroUsuarioRequest request) {
         if (usuarioRepository.existsByEmail(request.email())) {
-            throw new IllegalStateException("E-mail já cadastrado.");
+            throw new ConflitoDeEstadoException("E-mail já cadastrado.");
         }
         String hash = passwordEncoder.encode(request.senha());
         Usuario usuario = Usuario.criarComSenha(request.email(), hash, request.nome());
@@ -32,7 +35,7 @@ class UsuarioServiceImpl implements UsuarioService {
     }
 
     @Override
-    public void atualizarPerfil(AtualizarPerfilRequest request) {
+    public UsuarioResumo atualizarPerfil(AtualizarPerfilRequest request) {
         Usuario usuario = autenticarOuFalhar(request.email(), request.senhaAtual());
 
         if (request.novoNome() != null && !request.novoNome().isBlank()) {
@@ -42,7 +45,10 @@ class UsuarioServiceImpl implements UsuarioService {
             usuario.alterarSenhaHash(passwordEncoder.encode(request.novaSenha()));
         }
 
-        usuarioRepository.save(usuario);
+        usuario = usuarioRepository.save(usuario);
+
+        return new UsuarioResumo(usuario.getId(), usuario.getEmail(), usuario.getNome(),
+                usuario.getDataProvaAlvo(), usuario.getCriadoEm());
     }
 
     @Override
@@ -60,16 +66,16 @@ class UsuarioServiceImpl implements UsuarioService {
 
     private Usuario autenticarOuFalhar(String email, String senha) {
         Usuario usuario = usuarioRepository.findByEmail(email)
-                .orElseThrow(() -> new SecurityException("Credenciais inválidas."));
+                .orElseThrow(() -> new CredenciaisInvalidasException("Credenciais inválidas."));
 
         if (usuario.getProvedorAuth() != ProvedorAuth.LOCAL) {
-            throw new IllegalStateException(
+            throw new RegraDeNegocioException(
                     "Esta conta usa login via " + usuario.getProvedorAuth() +
                             ". Esta operação não se aplica a contas de provedor externo.");
         }
 
         if (!passwordEncoder.matches(senha, usuario.getSenhaHash())) {
-            throw new SecurityException("Credenciais inválidas.");
+            throw new CredenciaisInvalidasException("Credenciais inválidas.");
         }
         return usuario;
     }

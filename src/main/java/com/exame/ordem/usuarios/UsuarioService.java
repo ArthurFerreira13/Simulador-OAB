@@ -8,7 +8,7 @@ import com.exame.ordem.usuarios.dto.UsuarioResumo;
 
 public interface UsuarioService {
     UsuarioResumo cadastrar(CadastroUsuarioRequest request);
-    void atualizarPerfil(AtualizarPerfilRequest request);
+    UsuarioResumo atualizarPerfil(AtualizarPerfilRequest request);
     void excluirConta(ExcluirContaRequest request);
     UsuarioResumo consultarPerfil(String email, String senha);
 
