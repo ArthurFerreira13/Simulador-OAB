@@ -1,53 +1,107 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+		 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 		 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
+
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>4.1.1</version>
-		<relativePath/> <!-- lookup parent from repository -->
+		<relativePath/>
 	</parent>
+
 	<groupId>com.exame</groupId>
 	<artifactId>ordem</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
-	<url/>
-	<licenses>
-		<license/>
-	</licenses>
-	<developers>
-		<developer/>
-	</developers>
-	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
-	</scm>
+	<name>ordem</name>
+	<description>Aplicação de consulta e estudo jurídico com RAG</description>
+
 	<properties>
 		<java.version>21</java.version>
+
+		<!-- Spring Modulith -->
 		<spring-modulith.version>2.1.1</spring-modulith.version>
-		<langchain4j.version>0.34.0</langchain4j.version>
+
+		<!-- O BOM estável gerencia os módulos beta 1.20.0-beta30 quando necessário. -->
+		<langchain4j.version>1.20.0</langchain4j.version>
+
+		<!-- Bibliotecas sem gerenciamento adequado pelo parent do Spring Boot. -->
 		<jsoup.version>1.18.1</jsoup.version>
 		<bucket4j.version>8.10.1</bucket4j.version>
 
-		<!-- Alinha todo o ecossistema JUnit (Jupiter, Platform, Vintage) na versão 6.0.3 -->
+		<!-- Alinhamento do ecossistema JUnit. -->
 		<junit-jupiter.version>6.0.3</junit-jupiter.version>
 
-		<!-- Correção de segurança: CVE-2026-24400 (AssertJ XXE) -->
+		<!-- Overrides de segurança. -->
 		<assertj.version>3.27.7</assertj.version>
-
-		<!-- Correção de segurança: CVE-2024-25710 / CVE-2024-26308 (Commons Compress DoS) -->
 		<commons-compress.version>1.28.0</commons-compress.version>
-
-		<!-- BOM do Jackson 3 para alinhar core/databind/annotations -->
-		<jackson-bom.version>3.1.5</jackson-bom.version>
 	</properties>
 
+	<dependencyManagement>
+		<dependencies>
+			<!-- BOM do JUnit. -->
+			<dependency>
+				<groupId>org.junit</groupId>
+				<artifactId>junit-bom</artifactId>
+				<version>${junit-jupiter.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+
+			<!-- BOM do Spring Modulith. -->
+			<dependency>
+				<groupId>org.springframework.modulith</groupId>
+				<artifactId>spring-modulith-bom</artifactId>
+				<version>${spring-modulith.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+				<exclusions>
+					<exclusion>
+						<groupId>org.junit</groupId>
+						<artifactId>junit-bom</artifactId>
+					</exclusion>
+				</exclusions>
+			</dependency>
+
+			<!--
+                BOM do LangChain4j.
+                Ele gerencia, entre outros:
+                - langchain4j-spring-boot4-starter: 1.20.0-beta30
+                - langchain4j-open-ai-spring-boot4-starter: 1.20.0-beta30
+                - langchain4j-pgvector: 1.20.0-beta30
+                - langchain4j-jackson3: 1.20.0-beta30
+            -->
+			<dependency>
+				<groupId>dev.langchain4j</groupId>
+				<artifactId>langchain4j-bom</artifactId>
+				<version>${langchain4j.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+				<exclusions>
+					<exclusion>
+						<groupId>org.junit</groupId>
+						<artifactId>junit-bom</artifactId>
+					</exclusion>
+				</exclusions>
+			</dependency>
+
+			<!-- Overrides de segurança. -->
+			<dependency>
+				<groupId>org.assertj</groupId>
+				<artifactId>assertj-core</artifactId>
+				<version>${assertj.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.commons</groupId>
+				<artifactId>commons-compress</artifactId>
+				<version>${commons-compress.version}</version>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
 	<dependencies>
-		<!-- Dependências Originais do Projeto Base -->
+		<!-- Spring Boot -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
@@ -68,10 +122,25 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
+
+		<!-- Swagger/OpenAPI (documentação da API) -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>3.1.1</version>
+		</dependency>
+
+		<!-- Flyway/PostgreSQL -->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>
+
+		<!-- Spring Modulith -->
 		<dependency>
 			<groupId>org.springframework.modulith</groupId>
 			<artifactId>spring-modulith-starter-core</artifactId>
@@ -85,42 +154,40 @@
 			<artifactId>spring-modulith-starter-jpa</artifactId>
 		</dependency>
 
-		<!-- Flyway Core -->
-		<dependency>
-			<groupId>org.flywaydb</groupId>
-			<artifactId>flyway-core</artifactId>
-		</dependency>
-
-		<!-- LangChain4j (RAG/Tutor IA + vector store PGvector) -->
+		<!-- LangChain4j: Spring Boot 4, OpenAI e PGvector -->
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
-			<artifactId>langchain4j-spring-boot-starter</artifactId>
+			<artifactId>langchain4j-spring-boot4-starter</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
-			<artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+			<artifactId>langchain4j-open-ai-spring-boot4-starter</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
 			<artifactId>langchain4j-pgvector</artifactId>
-			<version>${langchain4j.version}</version>
+		</dependency>
+		<!-- Faz o LangChain4j usar Jackson 3, como o Spring Boot 4. -->
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-jackson3</artifactId>
 		</dependency>
 
-		<!-- Web Scraping (ingestão de legislação) -->
+		<!-- Web scraping -->
 		<dependency>
 			<groupId>org.jsoup</groupId>
 			<artifactId>jsoup</artifactId>
 			<version>${jsoup.version}</version>
 		</dependency>
 
-		<!-- Rate Limiting -->
+		<!-- Rate limiting -->
 		<dependency>
 			<groupId>com.bucket4j</groupId>
 			<artifactId>bucket4j-core</artifactId>
 			<version>${bucket4j.version}</version>
 		</dependency>
 
-		<!-- Scopes Runtime Originais -->
+		<!-- Runtime -->
 		<dependency>
 			<groupId>io.micrometer</groupId>
 			<artifactId>micrometer-registry-prometheus</artifactId>
@@ -137,7 +204,7 @@
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- Scopes Test Originais -->
+		<!-- Testes Spring Boot -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
@@ -184,13 +251,6 @@
 			<artifactId>spring-modulith-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
-
-		<dependency>
-			<groupId>org.springframework.security</groupId>
-			<artifactId>spring-security-crypto</artifactId>
-		</dependency>
-
-		<!-- Testcontainers -->
 		<dependency>
 			<groupId>org.testcontainers</groupId>
 			<artifactId>testcontainers-junit-jupiter</artifactId>
@@ -201,71 +261,18 @@
 			<artifactId>testcontainers-postgresql</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+		<!-- Criptografia utilizada pela aplicação -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-crypto</artifactId>
+		</dependency>
+		<!-- Spring Security OAuth2 Resource Server -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+		</dependency>
 	</dependencies>
-
-	<dependencyManagement>
-		<dependencies>
-			<!-- CORREÇÃO: BOM oficial do JUnit para sincronizar Jupiter, Platform e Vintage -->
-			<dependency>
-				<groupId>org.junit</groupId>
-				<artifactId>junit-bom</artifactId>
-				<version>${junit-jupiter.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-
-			<!-- BOM do Jackson 3: alinha jackson-core, jackson-databind e jackson-annotations -->
-			<dependency>
-				<groupId>tools.jackson</groupId>
-				<artifactId>jackson-bom</artifactId>
-				<version>${jackson-bom.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-
-			<!-- Overrides de segurança -->
-			<dependency>
-				<groupId>org.assertj</groupId>
-				<artifactId>assertj-core</artifactId>
-				<version>${assertj.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>org.apache.commons</groupId>
-				<artifactId>commons-compress</artifactId>
-				<version>${commons-compress.version}</version>
-			</dependency>
-
-			<!-- BOM do Spring Modulith — exclui o junit-bom interno para manter a versão 6.0.3 -->
-			<dependency>
-				<groupId>org.springframework.modulith</groupId>
-				<artifactId>spring-modulith-bom</artifactId>
-				<version>${spring-modulith.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-				<exclusions>
-					<exclusion>
-						<groupId>org.junit</groupId>
-						<artifactId>junit-bom</artifactId>
-					</exclusion>
-				</exclusions>
-			</dependency>
-
-			<!-- BOM do LangChain4j — exclui o junit-bom interno -->
-			<dependency>
-				<groupId>dev.langchain4j</groupId>
-				<artifactId>langchain4j-bom</artifactId>
-				<version>${langchain4j.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-				<exclusions>
-					<exclusion>
-						<groupId>org.junit</groupId>
-						<artifactId>junit-bom</artifactId>
-					</exclusion>
-				</exclusions>
-			</dependency>
-		</dependencies>
-	</dependencyManagement>
 
 	<build>
 		<plugins>
@@ -275,5 +282,4 @@
 			</plugin>
 		</plugins>
 	</build>
-
 </project>
