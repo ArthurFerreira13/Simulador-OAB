@@ -21,11 +21,7 @@ public class AdministradorController {
 
     @PostMapping
     public ResponseEntity<Void> cadastrar(@Valid @RequestBody CadastroAdministradorRequest request) {
-        try {
-            administradorService.cadastrar(request);
-            return ResponseEntity.status(HttpStatus.CREATED).build();
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).build();
-        }
+        administradorService.cadastrar(request);
+        return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 }

@@ -36,7 +36,7 @@ public class Usuario {
     @Column(name = "criado_em", nullable = false, updatable = false)
     private LocalDateTime criadoEm = LocalDateTime.now(ZoneOffset.UTC);
 
-    protected Usuario() {}
+    public Usuario() {}
 
     public static Usuario criarComSenha(String email, String senhaHash, String nome) {
         Usuario u = new Usuario();

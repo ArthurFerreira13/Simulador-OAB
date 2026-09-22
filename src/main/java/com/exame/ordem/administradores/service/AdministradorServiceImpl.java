@@ -4,6 +4,7 @@ import com.exame.ordem.administradores.AdministradorService;
 import com.exame.ordem.administradores.dto.CadastroAdministradorRequest;
 import com.exame.ordem.administradores.internal.Administrador;
 import com.exame.ordem.administradores.internal.AdministradorRepository;
+import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +22,7 @@ class AdministradorServiceImpl implements AdministradorService {
     @Override
     public void cadastrar(CadastroAdministradorRequest request) {
         if (repository.existsByEmail(request.email())) {
-            throw new IllegalStateException("E-mail já cadastrado.");
+            throw new ConflitoDeEstadoException("E-mail já cadastrado.");
         }
 
         String hash = passwordEncoder.encode(request.senha());

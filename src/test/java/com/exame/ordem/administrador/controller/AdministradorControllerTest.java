@@ -1,4 +1,4 @@
-package com.exame.ordem.administradorTest;
+package com.exame.ordem.administrador.controller;
 
 
 
