@@ -2,7 +2,10 @@ package com.exame.ordem.usuarios.service;
 
 import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
 import com.exame.ordem.system.erro.excecoes.CredenciaisInvalidasException;
-import com.exame.ordem.usuarios.dto.*;
+import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
+import com.exame.ordem.usuarios.dto.AtualizarPerfilRequest;
+import com.exame.ordem.usuarios.dto.CadastroUsuarioRequest;
+import com.exame.ordem.usuarios.dto.UsuarioResumo;
 import com.exame.ordem.usuarios.internal.ProvedorAuth;
 import com.exame.ordem.usuarios.internal.Usuario;
 import com.exame.ordem.usuarios.internal.UsuarioRepository;
@@ -70,7 +73,34 @@ class UsuarioServiceImplTest {
     }
 
     // ================================================================
-    //  consultarPerfil
+    //  buscarPorId
+    // ================================================================
+
+    @Test
+    @DisplayName("buscarPorId → retorna UsuarioResumo")
+    void buscarPorId_sucesso() {
+        Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+
+        UsuarioResumo resumo = service.buscarPorId(1L);
+
+        assertThat(resumo.id()).isEqualTo(1L);
+        assertThat(resumo.email()).isEqualTo("arthur@teste.com");
+        assertThat(resumo.nome()).isEqualTo("Arthur");
+    }
+
+    @Test
+    @DisplayName("buscarPorId → não existe → RecursoNaoEncontradoException")
+    void buscarPorId_inexistente() {
+        when(usuarioRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.buscarPorId(99L))
+                .isInstanceOf(RecursoNaoEncontradoException.class)
+                .hasMessageContaining("não encontrado");
+    }
+
+    // ================================================================
+    //  consultarPerfil (autenticação — usada só pelo AuthService.login)
     // ================================================================
 
     @Test
@@ -116,75 +146,84 @@ class UsuarioServiceImplTest {
     @DisplayName("atualizarPerfil → altera só nome")
     void atualizarPerfil_alteraNome() {
         Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senha12345", "$2a$10$hash")).thenReturn(true);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
-        UsuarioResumo resumo = service.atualizarPerfil(new AtualizarPerfilRequest(
-                "arthur@teste.com", "senha12345", "Arthur Silva", null));
+        UsuarioResumo resumo = service.atualizarPerfil(1L,
+                new AtualizarPerfilRequest("Arthur Silva", null));
 
         assertThat(resumo.nome()).isEqualTo("Arthur Silva");
-        verify(passwordEncoder, never()).encode(anyString());  // não trocou a senha
+        verify(passwordEncoder, never()).encode(anyString());
     }
 
     @Test
     @DisplayName("atualizarPerfil → altera só senha")
     void atualizarPerfil_alteraSenha() {
         Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senha12345", "$2a$10$hash")).thenReturn(true);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
         when(passwordEncoder.encode("novasenha456")).thenReturn("$2a$10$novohash");
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
-        service.atualizarPerfil(new AtualizarPerfilRequest(
-                "arthur@teste.com", "senha12345", null, "novasenha456"));
+        service.atualizarPerfil(1L,
+                new AtualizarPerfilRequest(null, "novasenha456"));
 
         assertThat(usuario.getSenhaHash()).isEqualTo("$2a$10$novohash");
-        assertThat(usuario.getNome()).isEqualTo("Arthur");   // nome não mudou
+        assertThat(usuario.getNome()).isEqualTo("Arthur");
     }
 
     @Test
     @DisplayName("atualizarPerfil → altera nome e senha")
     void atualizarPerfil_alteraAmbos() {
         Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senha12345", "$2a$10$hash")).thenReturn(true);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
         when(passwordEncoder.encode("novasenha456")).thenReturn("$2a$10$novohash");
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
-        UsuarioResumo resumo = service.atualizarPerfil(new AtualizarPerfilRequest(
-                "arthur@teste.com", "senha12345", "Arthur Silva", "novasenha456"));
+        UsuarioResumo resumo = service.atualizarPerfil(1L,
+                new AtualizarPerfilRequest("Arthur Silva", "novasenha456"));
 
         assertThat(resumo.nome()).isEqualTo("Arthur Silva");
         assertThat(usuario.getSenhaHash()).isEqualTo("$2a$10$novohash");
     }
 
     @Test
-    @DisplayName("atualizarPerfil → senha atual errada → CredenciaisInvalidasException")
-    void atualizarPerfil_senhaAtualErrada() {
-        Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("errada", "$2a$10$hash")).thenReturn(false);
-
-        assertThatThrownBy(() -> service.atualizarPerfil(new AtualizarPerfilRequest(
-                "arthur@teste.com", "errada", "Hacker", "novasenha456")))
-                .isInstanceOf(CredenciaisInvalidasException.class);
-
-        verify(usuarioRepository, never()).save(any());  // não persistiu
-    }
-
-    @Test
     @DisplayName("atualizarPerfil → nome em branco é ignorado")
     void atualizarPerfil_nomeEmBranco() {
         Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senha12345", "$2a$10$hash")).thenReturn(true);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
-        service.atualizarPerfil(new AtualizarPerfilRequest(
-                "arthur@teste.com", "senha12345", "  ", null));
+        service.atualizarPerfil(1L,
+                new AtualizarPerfilRequest("  ", null));
 
-        assertThat(usuario.getNome()).isEqualTo("Arthur");  // não mudou
+        assertThat(usuario.getNome()).isEqualTo("Arthur");
+    }
+
+    @Test
+    @DisplayName("atualizarPerfil → usuário não existe → RecursoNaoEncontradoException")
+    void atualizarPerfil_usuarioInexistente() {
+        when(usuarioRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.atualizarPerfil(99L,
+                new AtualizarPerfilRequest("X", null)))
+                .isInstanceOf(RecursoNaoEncontradoException.class);
+
+        verify(usuarioRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("atualizarPerfil → conta não-LOCAL + novaSenha → ConflitoDeEstadoException")
+    void atualizarPerfil_contaExternaTentandoTrocarSenha() {
+        Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
+        ReflectionTestUtils.setField(usuario, "provedorAuth", ProvedorAuth.GOOGLE);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+
+        assertThatThrownBy(() -> service.atualizarPerfil(1L,
+                new AtualizarPerfilRequest(null, "novasenha456")))
+                .isInstanceOf(ConflitoDeEstadoException.class)
+                .hasMessageContaining("provedor externo");
+
+        verify(usuarioRepository, never()).save(any());
     }
 
     // ================================================================
@@ -195,24 +234,32 @@ class UsuarioServiceImplTest {
     @DisplayName("excluirConta → deleta usuário autenticado")
     void excluirConta_sucesso() {
         Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senha12345", "$2a$10$hash")).thenReturn(true);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
 
-        service.excluirConta(new ExcluirContaRequest("arthur@teste.com", "senha12345"));
+        service.excluirConta(1L);
 
         verify(usuarioRepository).delete(usuario);
     }
 
     @Test
-    @DisplayName("excluirConta → senha errada → CredenciaisInvalidasException")
-    void excluirConta_senhaErrada() {
+    @DisplayName("excluirConta → conta não-LOCAL também pode excluir (LGPD)")
+    void excluirConta_contaExterna() {
         Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("errada", "$2a$10$hash")).thenReturn(false);
+        ReflectionTestUtils.setField(usuario, "provedorAuth", ProvedorAuth.GOOGLE);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
 
-        assertThatThrownBy(() -> service.excluirConta(
-                new ExcluirContaRequest("arthur@teste.com", "errada")))
-                .isInstanceOf(CredenciaisInvalidasException.class);
+        service.excluirConta(1L);
+
+        verify(usuarioRepository).delete(usuario);
+    }
+
+    @Test
+    @DisplayName("excluirConta → usuário não existe → RecursoNaoEncontradoException")
+    void excluirConta_inexistente() {
+        when(usuarioRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.excluirConta(99L))
+                .isInstanceOf(RecursoNaoEncontradoException.class);
 
         verify(usuarioRepository, never()).delete(any());
     }
