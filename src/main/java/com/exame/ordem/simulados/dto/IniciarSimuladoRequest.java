@@ -1,9 +1,8 @@
 package com.exame.ordem.simulados.dto;
 
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Min;
 
 public record IniciarSimuladoRequest(
-        @NotBlank String email,
-        @NotBlank String senha,
+        @Min(value = 1, message = "numeroProva deve ser >= 1")
         int numeroProva
 ) {}

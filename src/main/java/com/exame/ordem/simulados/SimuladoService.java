@@ -3,12 +3,12 @@ package com.exame.ordem.simulados;
 import com.exame.ordem.simulados.dto.*;
 
 public interface SimuladoService {
-    SessaoDTO iniciarSimulado(IniciarSimuladoRequest request);
-    void responderQuestao(Long sessaoId, int questaoId, ResponderQuestaoRequest request);
-    ResultadoDTO finalizarSimulado(Long sessaoId);
-    ResultadoDTO consultarResultado(Long sessaoId);
-    SessaoDTO consultarSessaoAtiva(String email, String senha);
-    void marcarRevisao(Long sessaoId, int questaoId, Long usuarioId);
-    void desmarcarRevisao(Long sessaoId, int questaoId, Long usuarioId);
-    void abandonarSimulado(Long sessaoId, Long usuarioId);
+
+    SessaoDTO iniciarSimulado(Long usuarioId, IniciarSimuladoRequest request);
+
+    void responderQuestao(Long usuarioId, Long sessaoId, int questaoId, ResponderQuestaoRequest request);
+
+    ResultadoDTO finalizarSimulado(Long usuarioId, Long sessaoId);
+
+    void abandonarSimulado(Long usuarioId, Long sessaoId);
 }
