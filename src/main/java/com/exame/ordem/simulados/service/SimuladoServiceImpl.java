@@ -11,6 +11,9 @@ import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
 import com.exame.ordem.system.erro.excecoes.LimiteExcedidoException;
 import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
 import com.exame.ordem.system.erro.excecoes.RegraDeNegocioException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,8 +30,25 @@ import java.util.stream.Collectors;
 @Service
 class SimuladoServiceImpl implements SimuladoService {
 
-    private static final int TEMPO_LIMITE_SEGUNDOS = 5 * 60 * 60;
-    private static final BigDecimal NOTA_CORTE = BigDecimal.valueOf(50);
+    private static final Logger log = LoggerFactory.getLogger(SimuladoServiceImpl.class);
+
+    /**
+     * Categorias de uma questão no resultado de um simulado.
+     * D03/RN04: questão anulada (sem alternativa correta) conta como BRANCO,
+     * independentemente de ter sido respondida ou não.
+     */
+    private enum Categoria {
+        ACERTO,
+        ERRO,
+        BRANCO
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Valores parametrizados via application.yml
+    // ─────────────────────────────────────────────────────────────
+    private final int tempoLimiteSegundos;
+    private final BigDecimal notaCortePercentual;
+    private final int limiteDiario;
 
     private final SimuladoSessaoRepository sessaoRepository;
     private final SimuladoSessaoQuestaoRepository sessaoQuestaoRepository;
@@ -48,7 +68,10 @@ class SimuladoServiceImpl implements SimuladoService {
                         GabaritoService gabaritoService,
                         SessaoAbandonoHelper sessaoAbandonoHelper,
                         SimuladoSessaoValidator validator,
-                        SimuladoMapper mapper) {
+                        SimuladoMapper mapper,
+                        @Value("${app.simulado.tempo-limite-segundos:18000}") int tempoLimiteSegundos,
+                        @Value("${app.simulado.nota-corte-percentual:50}") int notaCortePercentual,
+                        @Value("${app.simulado.limite-diario:1}") int limiteDiario) {
         this.sessaoRepository = sessaoRepository;
         this.sessaoQuestaoRepository = sessaoQuestaoRepository;
         this.respostaRepository = respostaRepository;
@@ -58,7 +81,14 @@ class SimuladoServiceImpl implements SimuladoService {
         this.sessaoAbandonoHelper = sessaoAbandonoHelper;
         this.validator = validator;
         this.mapper = mapper;
+        this.tempoLimiteSegundos = tempoLimiteSegundos;
+        this.notaCortePercentual = BigDecimal.valueOf(notaCortePercentual);
+        this.limiteDiario = limiteDiario;
     }
+
+    // ================================================================
+    //  Iniciar simulado
+    // ================================================================
 
     @Override
     @Transactional
@@ -79,7 +109,8 @@ class SimuladoServiceImpl implements SimuladoService {
             throw new RecursoNaoEncontradoException("Prova sem questões.");
         }
 
-        SimuladoSessao sessao = SimuladoSessao.iniciar(usuarioId, questoes.get(0).provaId(), TEMPO_LIMITE_SEGUNDOS);
+        SimuladoSessao sessao = SimuladoSessao.iniciar(
+                usuarioId, questoes.get(0).provaId(), tempoLimiteSegundos);
         sessao = sessaoRepository.save(sessao);
 
         int ordem = 1;
@@ -90,14 +121,27 @@ class SimuladoServiceImpl implements SimuladoService {
         return mapper.toSessaoDTO(sessao, questoes, Map.of());
     }
 
+    /**
+     * Limite diário parametrizável. {@code <= 0} desliga o limite (dev).
+     */
     private void verificarLimiteDiario(Long usuarioId) {
+        if (limiteDiario <= 0) {
+            return;
+        }
+
         LocalDateTime inicioDoDia = LocalDate.now(ZoneOffset.UTC).atStartOfDay();
-        long simuladosHoje = sessaoRepository.countByUsuarioIdAndIniciadoEmAfter(usuarioId, inicioDoDia);
-        if (simuladosHoje >= 1) {
+        long simuladosHoje = sessaoRepository
+                .countByUsuarioIdAndIniciadoEmAfter(usuarioId, inicioDoDia);
+
+        if (simuladosHoje >= limiteDiario) {
             throw new LimiteExcedidoException(
                     "Limite diário de simulados atingido. Assine um plano para acesso ilimitado.");
         }
     }
+
+    // ================================================================
+    //  Responder questão
+    // ================================================================
 
     @Override
     @Transactional
@@ -110,7 +154,6 @@ class SimuladoServiceImpl implements SimuladoService {
                     "Questão " + questaoId + " não pertence à sessão " + sessaoId + ".");
         }
 
-        // Resolve a alternativa por letra -> ID (identificador de domínio -> chave técnica)
         QuestaoResumo questao = questoesQueryService.buscarQuestaoPorId(questaoId);
         Long alternativaId = questao.alternativas().stream()
                 .filter(a -> a.letra().equals(request.alternativa()))
@@ -127,14 +170,21 @@ class SimuladoServiceImpl implements SimuladoService {
                 );
     }
 
+    // ================================================================
+    //  Finalizar simulado
+    // ================================================================
+
     @Override
     @Transactional
     public ResultadoDTO finalizarSimulado(Long usuarioId, Long sessaoId) {
         SimuladoSessao sessao = validator.buscarSessaoDoUsuario(sessaoId, usuarioId);
 
-        if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
-            throw new ConflitoDeEstadoException("Esta sessão já foi finalizada.");
+        // Idempotência: se já CONCLUIDO, devolve o resultado existente
+        if (sessao.getStatus() == StatusSessao.CONCLUIDO) {
+            return retornarResultadoExistente(sessaoId);
         }
+
+        validator.validarSessaoEmAndamento(sessao);
 
         List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
                 .map(SimuladoSessaoQuestao::getQuestaoId)
@@ -147,25 +197,24 @@ class SimuladoServiceImpl implements SimuladoService {
         Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
                 .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
 
-        int acertos = 0, erros = 0, brancos = 0;
-        for (Integer qId : questaoIds) {
-            Long respondida = respostas.get(qId);
-            Long correta = gabarito.get(qId);
-            if (respondida == null) {
-                brancos++;
-            } else if (correta != null && correta.equals(respondida)) {
-                acertos++;
-            } else {
-                erros++;
-            }
-        }
+        // D03/RN04: agrupa cada questão em ACERTO, ERRO ou BRANCO.
+        // Anuladas (sem gabarito) contam como BRANCO.
+        Map<Categoria, Long> contagem = questaoIds.stream()
+                .collect(Collectors.groupingBy(
+                        qId -> categorizar(qId, respostas, gabarito),
+                        Collectors.counting()));
+
+        int acertos = contagem.getOrDefault(Categoria.ACERTO, 0L).intValue();
+        int erros   = contagem.getOrDefault(Categoria.ERRO,   0L).intValue();
+        int brancos = contagem.getOrDefault(Categoria.BRANCO, 0L).intValue();
 
         int total = questaoIds.size();
         BigDecimal percentual = BigDecimal.valueOf(acertos)
                 .divide(BigDecimal.valueOf(total), 4, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100))
                 .setScale(2, RoundingMode.HALF_UP);
-        boolean aprovado = percentual.compareTo(NOTA_CORTE) >= 0;
+
+        boolean aprovado = percentual.compareTo(notaCortePercentual) >= 0;
 
         sessao.finalizar();
         sessaoRepository.save(sessao);
@@ -177,6 +226,54 @@ class SimuladoServiceImpl implements SimuladoService {
 
         return mapper.toResultadoDTO(resultado, questaoIds, respostas);
     }
+
+    /**
+     * Classifica uma questão do simulado em ACERTO, ERRO ou BRANCO.
+     *
+     * Regra D03/RN04: questão anulada (gabarito devolve {@code null} porque
+     * nenhuma alternativa está marcada como correta) conta como BRANCO para
+     * todos os candidatos, independentemente de terem respondido ou não.
+     *
+     * O log em DEBUG serve para rastrear casos em que o gabarito está ausente
+     * sem que a questão tenha sido marcada como anulada — sinal de problema
+     * na ingestão ou nos dados.
+     */
+    private Categoria categorizar(Integer qId,
+                                  Map<Integer, Long> respostas,
+                                  Map<Integer, Long> gabarito) {
+
+        Long correta = gabarito.get(qId);
+        if (correta == null) {
+            log.debug("Questão {} sem gabarito (anulada) — contada como branco", qId);
+            return Categoria.BRANCO;
+        }
+
+        Long respondida = respostas.get(qId);
+        if (respondida == null) {
+            return Categoria.BRANCO;
+        }
+
+        return correta.equals(respondida) ? Categoria.ACERTO : Categoria.ERRO;
+    }
+
+    private ResultadoDTO retornarResultadoExistente(Long sessaoId) {
+        ResultadoSimulado existente = resultadoRepository.findBySessaoId(sessaoId)
+                .orElseThrow(() -> new ConflitoDeEstadoException(
+                        "Sessão concluída sem resultado persistido. Contate o suporte."));
+
+        List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
+                .map(SimuladoSessaoQuestao::getQuestaoId)
+                .toList();
+
+        Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
+                .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
+
+        return mapper.toResultadoDTO(existente, questaoIds, respostas);
+    }
+
+    // ================================================================
+    //  Abandonar simulado
+    // ================================================================
 
     @Override
     @Transactional
