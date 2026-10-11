@@ -16,10 +16,4 @@ public interface UsuarioService {
 
     /** Exclui a conta do usuário autenticado (LGPD). */
     void excluirConta(Long usuarioId);
-
-    /**
-     * Autenticação por email+senha — usado APENAS pelo AuthService.login.
-     * Não deve ser chamado por controllers autenticados.
-     */
-    UsuarioResumo consultarPerfil(String email, String senha);
 }

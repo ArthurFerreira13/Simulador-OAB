@@ -1,7 +1,6 @@
 package com.exame.ordem.usuarios.service;
 
 import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
-import com.exame.ordem.system.erro.excecoes.CredenciaisInvalidasException;
 import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
 import com.exame.ordem.usuarios.UsuarioService;
 import com.exame.ordem.usuarios.dto.AtualizarPerfilRequest;
@@ -56,6 +55,11 @@ class UsuarioServiceImpl implements UsuarioService {
             usuario.alterarNome(request.novoNome());
         }
 
+        // Bug corrigido: data da prova agora é persistida
+        if (request.dataProvaAlvo() != null) {
+            usuario.alterarDataProvaAlvo(request.dataProvaAlvo());
+        }
+
         if (request.novaSenha() != null && !request.novaSenha().isBlank()) {
             if (usuario.getProvedorAuth() != ProvedorAuth.LOCAL) {
                 throw new ConflitoDeEstadoException(
@@ -75,24 +79,6 @@ class UsuarioServiceImpl implements UsuarioService {
         Usuario usuario = usuarioRepository.findById(usuarioId)
                 .orElseThrow(() -> new RecursoNaoEncontradoException("Usuário não encontrado."));
         usuarioRepository.delete(usuario);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public UsuarioResumo consultarPerfil(String email, String senha) {
-        Usuario usuario = usuarioRepository.findByEmail(email)
-                .orElseThrow(() -> new CredenciaisInvalidasException("Credenciais inválidas."));
-
-        if (usuario.getProvedorAuth() != ProvedorAuth.LOCAL) {
-            throw new CredenciaisInvalidasException("Credenciais inválidas.");
-        }
-
-        if (usuario.getSenhaHash() == null
-                || !passwordEncoder.matches(senha, usuario.getSenhaHash())) {
-            throw new CredenciaisInvalidasException("Credenciais inválidas.");
-        }
-
-        return toResumo(usuario);
     }
 
     private UsuarioResumo toResumo(Usuario usuario) {
