@@ -60,6 +60,10 @@ public class Usuario {
         this.nome = novoNome;
     }
 
+    public void alterarDataProvaAlvo(LocalDate novaData) {
+        this.dataProvaAlvo = novaData;
+    }
+
     public void alterarSenhaHash(String novoSenhaHash) {
         this.senhaHash = novoSenhaHash;
     }

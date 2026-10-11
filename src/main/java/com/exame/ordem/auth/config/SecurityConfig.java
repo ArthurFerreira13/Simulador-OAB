@@ -50,11 +50,15 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .anyRequest().authenticated()
                 )
+                // OAuth2 Resource Server: apenas habilita JWT.
+                // NÃO customizar authenticationEntryPoint/accessDeniedHandler aqui —
+                // deixamos o BearerTokenAuthenticationEntryPoint padrão do Spring Security 7
+                // cuidar disso. A customização fica apenas em exceptionHandling abaixo.
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(Customizer.withDefaults())
-                        .authenticationEntryPoint(authenticationEntryPoint)
-                        .accessDeniedHandler(accessDeniedHandler)
                 )
+                // Aqui sim: entry point e handler customizados, aplicados a toda
+                // requisição não autenticada (sem header Authorization, ou inválida).
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler)
