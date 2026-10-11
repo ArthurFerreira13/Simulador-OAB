@@ -9,7 +9,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate   # Não valida nem cria o esquema — a BD é gerida externamente.
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
@@ -23,8 +23,6 @@ spring:
         enabled: false
 
   flyway:
-    # Flyway ativo: faz baseline da V1 (tabelas restauradas do backup)
-    # e executa apenas a partir da V2 em diante.
     enabled: true
     baseline-on-migrate: true
     baseline-version: 1
@@ -42,6 +40,19 @@ app:
     secret: ${JWT_SECRET:dev-secret-com-pelo-menos-32-bytes-aqui-troque-em-producao}
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:240}
 
+  # ─────────────────────────────────────────────────────────
+  # Parâmetros de simulado (RN02, RN03)
+  # ─────────────────────────────────────────────────────────
+  simulado:
+    tempo-limite-segundos: ${SIMULADO_TEMPO_LIMITE:18000}   # 5h
+    nota-corte-percentual: ${SIMULADO_NOTA_CORTE:50}        # 50% = 40/80
+    limite-diario: ${SIMULADO_LIMITE_DIARIO:1}              # produção: 1/dia
+
+  # ─────────────────────────────────────────────────────────
+  # Trial reverso (D11)
+  # ─────────────────────────────────────────────────────────
+  trial:
+    dias: ${TRIAL_DIAS:7}
 
 management:
   endpoints:

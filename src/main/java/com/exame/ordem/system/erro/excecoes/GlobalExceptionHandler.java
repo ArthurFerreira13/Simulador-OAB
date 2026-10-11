@@ -1,15 +1,14 @@
-package com.exame.ordem.system.erro;
+package com.exame.ordem.system.erro.excecoes;
 
-import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
-import com.exame.ordem.system.erro.excecoes.CredenciaisInvalidasException;
-import com.exame.ordem.system.erro.excecoes.LimiteExcedidoException;
-import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
-import com.exame.ordem.system.erro.excecoes.RegraDeNegocioException;
+
+import com.exame.ordem.system.erro.ErroCodigo;
+import com.exame.ordem.system.erro.ErroDTO;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -70,6 +69,19 @@ public class GlobalExceptionHandler {
                 detalhes);
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(dto);
+    }
+
+    /**
+     * JSON malformado no body (ex.: aspas faltando) — é erro do cliente.
+     * Devolve 400 em vez de 500.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErroDTO> tratarJsonInvalido(HttpMessageNotReadableException e, HttpServletRequest req) {
+        return resposta(
+                ErroCodigo.REQUISICAO_INVALIDA,
+                "Corpo da requisição inválido ou malformado.",
+                req,
+                HttpStatus.BAD_REQUEST);
     }
 
     /**

@@ -1,8 +1,8 @@
 package com.exame.ordem.simulados.internal;
 
+import com.exame.ordem.questoes.GabaritoService;
 import com.exame.ordem.questoes.dto.QuestaoResumo;
 import com.exame.ordem.questoes.dto.QuestaoRevisadaDTO;
-import com.exame.ordem.questoes.QuestoesQueryService;
 import com.exame.ordem.simulados.dto.*;
 import org.springframework.stereotype.Component;
 
@@ -12,17 +12,20 @@ import java.util.stream.Collectors;
 
 /**
  * Monta DTOs de simulado a partir de entidades internas + dados do módulo questoes.
+ *
+ * Não calcula gabarito — quem faz isso é o GabaritoService.
+ * Aqui só empacotamos o resultado para a API.
  */
 @Component
 public class SimuladoMapper {
 
     private final SimuladoSessaoQuestaoRepository sessaoQuestaoRepository;
-    private final QuestoesQueryService questoesQueryService;
+    private final GabaritoService gabaritoService;
 
     SimuladoMapper(SimuladoSessaoQuestaoRepository sessaoQuestaoRepository,
-                   QuestoesQueryService questoesQueryService) {
+                   GabaritoService gabaritoService) {
         this.sessaoQuestaoRepository = sessaoQuestaoRepository;
-        this.questoesQueryService = questoesQueryService;
+        this.gabaritoService = gabaritoService;
     }
 
     public SessaoDTO toSessaoDTO(SimuladoSessao sessao,
@@ -51,14 +54,7 @@ public class SimuladoMapper {
     public ResultadoDTO toResultadoDTO(ResultadoSimulado resultado,
                                        List<Integer> questaoIds,
                                        Map<Integer, Long> respostas) {
-        List<QuestaoRevisadaDTO> revisao = questoesQueryService.buscarComGabarito(questaoIds).stream()
-                .map(q -> {
-                    Long escolhida = respostas.get(q.questaoId());
-                    boolean correta = q.alternativas().stream()
-                            .anyMatch(a -> a.ehCorreta() && a.id().equals(escolhida));
-                    return new QuestaoRevisadaDTO(q, escolhida, correta);
-                })
-                .toList();
+        List<QuestaoRevisadaDTO> revisao = gabaritoService.montarRevisao(questaoIds, respostas);
 
         return new ResultadoDTO(
                 resultado.getTotalQuestoes(), resultado.getAcertos(), resultado.getErros(),

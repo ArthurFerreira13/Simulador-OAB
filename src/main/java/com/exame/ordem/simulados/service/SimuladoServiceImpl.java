@@ -1,6 +1,8 @@
 package com.exame.ordem.simulados.service;
 
+import com.exame.ordem.questoes.GabaritoService;
 import com.exame.ordem.questoes.QuestoesQueryService;
+import com.exame.ordem.questoes.dto.AlternativaResumo;
 import com.exame.ordem.questoes.dto.QuestaoResumo;
 import com.exame.ordem.simulados.SimuladoService;
 import com.exame.ordem.simulados.dto.*;
@@ -8,6 +10,7 @@ import com.exame.ordem.simulados.internal.*;
 import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
 import com.exame.ordem.system.erro.excecoes.LimiteExcedidoException;
 import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
+import com.exame.ordem.system.erro.excecoes.RegraDeNegocioException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +35,7 @@ class SimuladoServiceImpl implements SimuladoService {
     private final RespostaSimuladoRepository respostaRepository;
     private final ResultadoSimuladoRepository resultadoRepository;
     private final QuestoesQueryService questoesQueryService;
+    private final GabaritoService gabaritoService;
     private final SessaoAbandonoHelper sessaoAbandonoHelper;
     private final SimuladoSessaoValidator validator;
     private final SimuladoMapper mapper;
@@ -41,6 +45,7 @@ class SimuladoServiceImpl implements SimuladoService {
                         RespostaSimuladoRepository respostaRepository,
                         ResultadoSimuladoRepository resultadoRepository,
                         QuestoesQueryService questoesQueryService,
+                        GabaritoService gabaritoService,
                         SessaoAbandonoHelper sessaoAbandonoHelper,
                         SimuladoSessaoValidator validator,
                         SimuladoMapper mapper) {
@@ -49,6 +54,7 @@ class SimuladoServiceImpl implements SimuladoService {
         this.respostaRepository = respostaRepository;
         this.resultadoRepository = resultadoRepository;
         this.questoesQueryService = questoesQueryService;
+        this.gabaritoService = gabaritoService;
         this.sessaoAbandonoHelper = sessaoAbandonoHelper;
         this.validator = validator;
         this.mapper = mapper;
@@ -84,11 +90,6 @@ class SimuladoServiceImpl implements SimuladoService {
         return mapper.toSessaoDTO(sessao, questoes, Map.of());
     }
 
-    /**
-     * Limite diário de 1 simulado por usuário.
-     * TODO: quando o módulo `assinatura` existir, mover a lógica de trial para lá
-     * e permitir acesso ilimitado para assinantes.
-     */
     private void verificarLimiteDiario(Long usuarioId) {
         LocalDateTime inicioDoDia = LocalDate.now(ZoneOffset.UTC).atStartOfDay();
         long simuladosHoje = sessaoRepository.countByUsuarioIdAndIniciadoEmAfter(usuarioId, inicioDoDia);
@@ -109,16 +110,20 @@ class SimuladoServiceImpl implements SimuladoService {
                     "Questão " + questaoId + " não pertence à sessão " + sessaoId + ".");
         }
 
-        if (!questoesQueryService.existeAlternativaNaQuestao(questaoId, request.alternativaId())) {
-            throw new RecursoNaoEncontradoException(
-                    "Alternativa " + request.alternativaId() + " não pertence à questão " + questaoId + ".");
-        }
+        // Resolve a alternativa por letra -> ID (identificador de domínio -> chave técnica)
+        QuestaoResumo questao = questoesQueryService.buscarQuestaoPorId(questaoId);
+        Long alternativaId = questao.alternativas().stream()
+                .filter(a -> a.letra().equals(request.alternativa()))
+                .map(AlternativaResumo::id)
+                .findFirst()
+                .orElseThrow(() -> new RegraDeNegocioException(
+                        "Alternativa " + request.alternativa() + " não existe na questão " + questaoId));
 
         respostaRepository.findBySessaoIdAndQuestaoId(sessaoId, questaoId)
                 .ifPresentOrElse(
-                        r -> r.atualizarResposta(request.alternativaId()),
+                        r -> r.atualizarResposta(alternativaId),
                         () -> respostaRepository.save(
-                                new RespostaSimulado(sessaoId, questaoId, request.alternativaId()))
+                                new RespostaSimulado(sessaoId, questaoId, alternativaId))
                 );
     }
 
@@ -136,7 +141,7 @@ class SimuladoServiceImpl implements SimuladoService {
                 .toList();
 
         Map<Integer, Long> gabarito = new HashMap<>();
-        questoesQueryService.buscarGabarito(questaoIds)
+        gabaritoService.buscarGabarito(questaoIds)
                 .forEach(g -> gabarito.put(g.questaoId(), g.alternativaCorretaId()));
 
         Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
