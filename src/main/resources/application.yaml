@@ -41,6 +41,19 @@ app:
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:240}
 
   # ─────────────────────────────────────────────────────────
+  # Rate limit (bucket4j, em memória) — Bug 4 da auditoria
+  # ─────────────────────────────────────────────────────────
+  rate-limit:
+    enabled: true
+    rules:
+      login:
+        capacity: 5       # 5 tentativas de login
+        window: 1m        # por minuto, por IP
+      cadastro:
+        capacity: 3       # 3 cadastros
+        window: 1h        # por hora, por IP
+
+  # ─────────────────────────────────────────────────────────
   # Parâmetros de simulado (RN02, RN03)
   # ─────────────────────────────────────────────────────────
   simulado:

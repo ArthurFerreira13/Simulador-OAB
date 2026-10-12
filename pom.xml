@@ -180,11 +180,16 @@
 			<version>${jsoup.version}</version>
 		</dependency>
 
-		<!-- Rate limiting -->
+		<!-- Rate limiting (Bug 4) -->
 		<dependency>
 			<groupId>com.bucket4j</groupId>
 			<artifactId>bucket4j-core</artifactId>
 			<version>${bucket4j.version}</version>
+		</dependency>
+		<!-- Caffeine: cache com expiração para o rate limit (Bug 4) -->
+		<dependency>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
 		</dependency>
 
 		<!-- Runtime -->
