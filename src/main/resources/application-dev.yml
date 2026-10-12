@@ -3,9 +3,10 @@ app:
     limite-diario: 0
 
   # Bug 4: rate limit DESLIGADO em dev para não atrapalhar testes manuais.
-  # Para testar o rate limit, mude para true, reinicie e rode os testes.
   rate-limit:
-    enabled: true
-  logging:
-    level:
-      com.exame.ordem.system.events: debug
+    enabled: false
+
+# Fora de app:, no nível raiz
+logging:
+  level:
+    com.exame.ordem.system.events: debug
