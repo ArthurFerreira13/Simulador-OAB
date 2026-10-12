@@ -1,7 +1,6 @@
 package com.exame.ordem.usuarios.service;
 
 import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
-import com.exame.ordem.system.erro.excecoes.CredenciaisInvalidasException;
 import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
 import com.exame.ordem.usuarios.dto.AtualizarPerfilRequest;
 import com.exame.ordem.usuarios.dto.CadastroUsuarioRequest;
@@ -18,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDate;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -100,46 +100,9 @@ class UsuarioServiceImplTest {
     }
 
     // ================================================================
-    //  consultarPerfil (autenticação — usada só pelo AuthService.login)
-    // ================================================================
-
-    @Test
-    @DisplayName("consultarPerfil → retorna UsuarioResumo")
-    void consultarPerfil_sucesso() {
-        Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senha12345", "$2a$10$hash")).thenReturn(true);
-
-        UsuarioResumo resumo = service.consultarPerfil("arthur@teste.com", "senha12345");
-
-        assertThat(resumo.email()).isEqualTo("arthur@teste.com");
-        assertThat(resumo.nome()).isEqualTo("Arthur");
-    }
-
-    @Test
-    @DisplayName("consultarPerfil → usuário não existe → CredenciaisInvalidasException")
-    void consultarPerfil_usuarioInexistente() {
-        when(usuarioRepository.findByEmail("naoexiste@teste.com")).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.consultarPerfil("naoexiste@teste.com", "senha12345"))
-                .isInstanceOf(CredenciaisInvalidasException.class)
-                .hasMessageContaining("Credenciais inválidas");
-    }
-
-    @Test
-    @DisplayName("consultarPerfil → senha errada → CredenciaisInvalidasException")
-    void consultarPerfil_senhaErrada() {
-        Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
-        when(usuarioRepository.findByEmail("arthur@teste.com")).thenReturn(Optional.of(usuario));
-        when(passwordEncoder.matches("senhaERRADA", "$2a$10$hash")).thenReturn(false);
-
-        assertThatThrownBy(() -> service.consultarPerfil("arthur@teste.com", "senhaERRADA"))
-                .isInstanceOf(CredenciaisInvalidasException.class)
-                .hasMessageContaining("Credenciais inválidas");
-    }
-
-    // ================================================================
     //  atualizarPerfil
+    //  Assinatura atual: (Long id, AtualizarPerfilRequest)
+    //  AtualizarPerfilRequest: (String novoNome, LocalDate dataProvaAlvo, String novaSenha)
     // ================================================================
 
     @Test
@@ -150,9 +113,26 @@ class UsuarioServiceImplTest {
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
         UsuarioResumo resumo = service.atualizarPerfil(1L,
-                new AtualizarPerfilRequest("Arthur Silva", null));
+                new AtualizarPerfilRequest("Arthur Silva", null, null));
 
         assertThat(resumo.nome()).isEqualTo("Arthur Silva");
+        verify(passwordEncoder, never()).encode(anyString());
+    }
+
+    @Test
+    @DisplayName("atualizarPerfil → altera só data da prova")
+    void atualizarPerfil_alteraDataProva() {
+        Usuario usuario = usuarioLocal(1L, "arthur@teste.com", "Arthur", "$2a$10$hash");
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+        when(usuarioRepository.save(usuario)).thenReturn(usuario);
+
+        LocalDate novaData = LocalDate.now().plusMonths(6);
+
+        UsuarioResumo resumo = service.atualizarPerfil(1L,
+                new AtualizarPerfilRequest(null, novaData, null));
+
+        assertThat(resumo.dataProvaAlvo()).isEqualTo(novaData);
+        assertThat(usuario.getNome()).isEqualTo("Arthur");
         verify(passwordEncoder, never()).encode(anyString());
     }
 
@@ -165,7 +145,7 @@ class UsuarioServiceImplTest {
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
         service.atualizarPerfil(1L,
-                new AtualizarPerfilRequest(null, "novasenha456"));
+                new AtualizarPerfilRequest(null, null, "novasenha456"));
 
         assertThat(usuario.getSenhaHash()).isEqualTo("$2a$10$novohash");
         assertThat(usuario.getNome()).isEqualTo("Arthur");
@@ -180,7 +160,7 @@ class UsuarioServiceImplTest {
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
         UsuarioResumo resumo = service.atualizarPerfil(1L,
-                new AtualizarPerfilRequest("Arthur Silva", "novasenha456"));
+                new AtualizarPerfilRequest("Arthur Silva", null, "novasenha456"));
 
         assertThat(resumo.nome()).isEqualTo("Arthur Silva");
         assertThat(usuario.getSenhaHash()).isEqualTo("$2a$10$novohash");
@@ -194,7 +174,7 @@ class UsuarioServiceImplTest {
         when(usuarioRepository.save(usuario)).thenReturn(usuario);
 
         service.atualizarPerfil(1L,
-                new AtualizarPerfilRequest("  ", null));
+                new AtualizarPerfilRequest("  ", null, null));
 
         assertThat(usuario.getNome()).isEqualTo("Arthur");
     }
@@ -205,7 +185,7 @@ class UsuarioServiceImplTest {
         when(usuarioRepository.findById(99L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.atualizarPerfil(99L,
-                new AtualizarPerfilRequest("X", null)))
+                new AtualizarPerfilRequest("X", null, null)))
                 .isInstanceOf(RecursoNaoEncontradoException.class);
 
         verify(usuarioRepository, never()).save(any());
@@ -219,7 +199,7 @@ class UsuarioServiceImplTest {
         when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
 
         assertThatThrownBy(() -> service.atualizarPerfil(1L,
-                new AtualizarPerfilRequest(null, "novasenha456")))
+                new AtualizarPerfilRequest(null, null, "novasenha456")))
                 .isInstanceOf(ConflitoDeEstadoException.class)
                 .hasMessageContaining("provedor externo");
 

@@ -34,14 +34,14 @@ logging:
 
 app:
   admin:
-    chave-cadastro: ${ADMIN_CADASTRO_CHAVE:troque-essa-chave-antes-de-usar}
+    chave-cadastro: ${ADMIN_CADASTRO_CHAVE}
 
   jwt:
-    secret: ${JWT_SECRET:dev-secret-com-pelo-menos-32-bytes-aqui-troque-em-producao}
+    secret: ${JWT_SECRET}
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:240}
 
   # ─────────────────────────────────────────────────────────
-  # Rate limit (bucket4j, em memória) — Bug 4 da auditoria
+  # Rate limit (bucket4j, em memória)
   # ─────────────────────────────────────────────────────────
   rate-limit:
     enabled: true

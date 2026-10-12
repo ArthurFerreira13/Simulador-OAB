@@ -10,6 +10,11 @@ import java.util.Optional;
 /**
  * Repositório SOMENTE LEITURA para Questao.
  * Sem save()/delete() — a API só expõe consultas.
+ *
+ * Todas as queries filtram {@code anulada = false} (D03): questões
+ * anuladas não aparecem para o candidato em nenhum fluxo (listagem,
+ * simulado, avulsa). Se uma questão anulada precisa ser acessada
+ * para fins administrativos, usar um repositório separado.
  */
 public interface QuestaoRepository extends Repository<Questao, Integer> {
 
@@ -22,6 +27,7 @@ public interface QuestaoRepository extends Repository<Questao, Integer> {
         JOIN FETCH q.alternativas a
         LEFT JOIN FETCH q.disciplina
         WHERE q.prova.id = :provaId
+          AND q.anulada = false
         ORDER BY q.numero ASC, a.letra ASC
         """)
     List<Questao> findByProvaIdComAlternativas(@Param("provaId") Integer provaId);
@@ -31,6 +37,7 @@ public interface QuestaoRepository extends Repository<Questao, Integer> {
         JOIN FETCH q.alternativas a
         LEFT JOIN FETCH q.disciplina
         WHERE q.id IN :ids
+          AND q.anulada = false
         ORDER BY q.numero ASC, a.letra ASC
         """)
     List<Questao> findByIdInComAlternativas(@Param("ids") List<Integer> ids);
@@ -40,19 +47,21 @@ public interface QuestaoRepository extends Repository<Questao, Integer> {
         JOIN FETCH q.alternativas a
         LEFT JOIN FETCH q.disciplina
         WHERE q.disciplina.id = :disciplinaId
+          AND q.anulada = false
         ORDER BY q.numero ASC, a.letra ASC
         """)
     List<Questao> findByDisciplinaIdComAlternativas(@Param("disciplinaId") Long disciplinaId);
 
     @Query("""
-    SELECT DISTINCT q FROM Questao q
-    JOIN FETCH q.alternativas a
-    LEFT JOIN FETCH q.disciplina d
-    LEFT JOIN FETCH q.prova p
-    WHERE (:disciplinaId IS NULL OR d.id = :disciplinaId)
-      AND (:ano IS NULL OR p.ano = :ano)
-    ORDER BY p.ano DESC, p.id ASC, q.numero ASC, a.letra ASC
-    """)
+        SELECT DISTINCT q FROM Questao q
+        JOIN FETCH q.alternativas a
+        LEFT JOIN FETCH q.disciplina d
+        LEFT JOIN FETCH q.prova p
+        WHERE (:disciplinaId IS NULL OR d.id = :disciplinaId)
+          AND (:ano IS NULL OR p.ano = :ano)
+          AND q.anulada = false
+        ORDER BY p.ano DESC, p.id ASC, q.numero ASC, a.letra ASC
+        """)
     List<Questao> findByDisciplinaEAnoComAlternativas(
             @Param("disciplinaId") Long disciplinaId,
             @Param("ano") Integer ano);

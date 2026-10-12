@@ -1,11 +1,18 @@
 app:
+  admin:
+    chave-cadastro: dev-chave-local-nao-usar-em-producao
+
+  jwt:
+    secret: dev-secret-com-pelo-menos-32-bytes-para-hs256-ok
+
   simulado:
     limite-diario: 0
 
-  # Bug 4: rate limit DESLIGADO em dev para não atrapalhar testes manuais.
-  # Para testar o rate limit, mude para true, reinicie e rode os testes.
+  # Rate limit DESLIGADO em dev para não atrapalhar testes manuais.
   rate-limit:
-    enabled: true
-  logging:
-    level:
-      com.exame.ordem.system.events: debug
+    enabled: false
+
+# Fora de app:, no nível raiz
+logging:
+  level:
+    com.exame.ordem.system.events: debug

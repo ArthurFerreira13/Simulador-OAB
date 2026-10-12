@@ -19,8 +19,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
@@ -32,23 +35,16 @@ class SimuladoServiceImpl implements SimuladoService {
 
     private static final Logger log = LoggerFactory.getLogger(SimuladoServiceImpl.class);
 
-    /**
-     * Categorias de uma questão no resultado de um simulado.
-     * D03/RN04: questão anulada (sem alternativa correta) conta como BRANCO,
-     * independentemente de ter sido respondida ou não.
-     */
     private enum Categoria {
         ACERTO,
         ERRO,
         BRANCO
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Valores parametrizados via application.yml
-    // ─────────────────────────────────────────────────────────────
     private final int tempoLimiteSegundos;
     private final BigDecimal notaCortePercentual;
     private final int limiteDiario;
+    private final Clock clock;
 
     private final SimuladoSessaoRepository sessaoRepository;
     private final SimuladoSessaoQuestaoRepository sessaoQuestaoRepository;
@@ -69,6 +65,7 @@ class SimuladoServiceImpl implements SimuladoService {
                         SessaoAbandonoHelper sessaoAbandonoHelper,
                         SimuladoSessaoValidator validator,
                         SimuladoMapper mapper,
+                        Clock clock,
                         @Value("${app.simulado.tempo-limite-segundos:18000}") int tempoLimiteSegundos,
                         @Value("${app.simulado.nota-corte-percentual:50}") int notaCortePercentual,
                         @Value("${app.simulado.limite-diario:1}") int limiteDiario) {
@@ -81,6 +78,7 @@ class SimuladoServiceImpl implements SimuladoService {
         this.sessaoAbandonoHelper = sessaoAbandonoHelper;
         this.validator = validator;
         this.mapper = mapper;
+        this.clock = clock;
         this.tempoLimiteSegundos = tempoLimiteSegundos;
         this.notaCortePercentual = BigDecimal.valueOf(notaCortePercentual);
         this.limiteDiario = limiteDiario;
@@ -122,16 +120,26 @@ class SimuladoServiceImpl implements SimuladoService {
     }
 
     /**
-     * Limite diário parametrizável. {@code <= 0} desliga o limite (dev).
+     * Limite diário (RN14, D13, D30).
+     *
+     * <p>Regras:
+     * <ul>
+     *   <li>{@code limiteDiario <= 0} desliga o limite (dev).</li>
+     *   <li>"Dia" é o dia civil em {@code America/Sao_Paulo} (D30).</li>
+     *   <li>Sessão abandonada sem nenhuma resposta não conta (D13).</li>
+     * </ul>
      */
     private void verificarLimiteDiario(Long usuarioId) {
         if (limiteDiario <= 0) {
             return;
         }
 
-        LocalDateTime inicioDoDia = LocalDate.now(ZoneOffset.UTC).atStartOfDay();
+        ZoneId fuso = clock.getZone();
+        Instant inicioDoDiaSP = LocalDate.now(clock).atStartOfDay(fuso).toInstant();
+        LocalDateTime inicioDoDiaUTC = LocalDateTime.ofInstant(inicioDoDiaSP, ZoneOffset.UTC);
+
         long simuladosHoje = sessaoRepository
-                .countByUsuarioIdAndIniciadoEmAfter(usuarioId, inicioDoDia);
+                .countComRespostaByUsuarioIdAndIniciadoEmAfter(usuarioId, inicioDoDiaUTC);
 
         if (simuladosHoje >= limiteDiario) {
             throw new LimiteExcedidoException(
@@ -179,12 +187,17 @@ class SimuladoServiceImpl implements SimuladoService {
     public ResultadoDTO finalizarSimulado(Long usuarioId, Long sessaoId) {
         SimuladoSessao sessao = validator.buscarSessaoDoUsuario(sessaoId, usuarioId);
 
-        // Idempotência: se já CONCLUIDO, devolve o resultado existente
+        // Idempotência: já finalizada → retorna resultado existente
         if (sessao.getStatus() == StatusSessao.CONCLUIDO) {
             return retornarResultadoExistente(sessaoId);
         }
 
-        validator.validarSessaoEmAndamento(sessao);
+        // D31/CA-RF03.2-01: sessão expirada pode ser finalizada normalmente
+        // — o candidato é corrigido com as respostas já registradas.
+        // Só sessões ABANDONADAS são recusadas.
+        if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
+            throw new ConflitoDeEstadoException("Sessão não está em andamento.");
+        }
 
         List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
                 .map(SimuladoSessaoQuestao::getQuestaoId)
@@ -197,8 +210,6 @@ class SimuladoServiceImpl implements SimuladoService {
         Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
                 .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
 
-        // D03/RN04: agrupa cada questão em ACERTO, ERRO ou BRANCO.
-        // Anuladas (sem gabarito) contam como BRANCO.
         Map<Categoria, Long> contagem = questaoIds.stream()
                 .collect(Collectors.groupingBy(
                         qId -> categorizar(qId, respostas, gabarito),
@@ -227,23 +238,15 @@ class SimuladoServiceImpl implements SimuladoService {
         return mapper.toResultadoDTO(resultado, questaoIds, respostas);
     }
 
-    /**
-     * Classifica uma questão do simulado em ACERTO, ERRO ou BRANCO.
-     *
-     * Regra D03/RN04: questão anulada (gabarito devolve {@code null} porque
-     * nenhuma alternativa está marcada como correta) conta como BRANCO para
-     * todos os candidatos, independentemente de terem respondido ou não.
-     *
-     * O log em DEBUG serve para rastrear casos em que o gabarito está ausente
-     * sem que a questão tenha sido marcada como anulada — sinal de problema
-     * na ingestão ou nos dados.
-     */
     private Categoria categorizar(Integer qId,
                                   Map<Integer, Long> respostas,
                                   Map<Integer, Long> gabarito) {
 
         Long correta = gabarito.get(qId);
         if (correta == null) {
+            // D03: questões anuladas não aparecem para o candidato e,
+            // portanto, não deveriam chegar aqui. Se chegarem, é sinal
+            // de dado inconsistente — contar como branco e logar.
             log.debug("Questão {} sem gabarito (anulada) — contada como branco", qId);
             return Categoria.BRANCO;
         }
