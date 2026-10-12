@@ -8,7 +8,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -48,8 +47,6 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        // Bug 4: rate limit instanciado à mão para ficar fora do contexto de beans
-        // (evita proxy CGLIB sobre OncePerRequestFilter).
         RateLimitFilter rateLimitFilter = new RateLimitFilter(rateLimitProperties, jsonMapper);
 
         http
@@ -57,20 +54,38 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Login de usuário comum
                         .requestMatchers("/api/auth/**").permitAll()
+
+                        // Cadastro de usuário
                         .requestMatchers(HttpMethod.POST, "/api/usuarios").permitAll()
+
+                        // Login do painel admin
+                        .requestMatchers("/api/admin/auth/**").permitAll()
+
+                        // Cadastro bootstrap de admin (chave no body)
+                        .requestMatchers(HttpMethod.POST, "/api/admin/administradores").permitAll()
+
+                        // Resto do painel admin: só ADMIN
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+
+                        // Documentação
                         .requestMatchers(
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**"
                         ).permitAll()
+
+                        // Actuator: health/info públicos; resto ADMIN
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
-                        .requestMatchers("/actuator/**").denyAll()
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
+
+                        // Resto: autenticado
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(Customizer.withDefaults())
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(JwtRoleConverter.build()))
                 )
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)

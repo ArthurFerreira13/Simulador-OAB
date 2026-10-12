@@ -5,4 +5,5 @@ import com.exame.ordem.auth.dto.TokenResponse;
 
 public interface AuthService {
     TokenResponse login(LoginRequest request);
+    TokenResponse loginAdmin(LoginRequest request);
 }

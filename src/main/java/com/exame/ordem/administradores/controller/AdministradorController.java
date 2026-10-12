@@ -3,14 +3,16 @@ package com.exame.ordem.administradores.controller;
 import com.exame.ordem.administradores.AdministradorService;
 import com.exame.ordem.administradores.dto.CadastroAdministradorRequest;
 import jakarta.validation.Valid;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-@Profile("dev")
+/**
+ * Cadastro bootstrap de administrador.
+ * A proteção vem da chave (app.admin.chave-cadastro) no body.
+ */
 @RestController
-@RequestMapping("/api/administradores")
+@RequestMapping("/api/admin/administradores")
 public class AdministradorController {
 
     private final AdministradorService administradorService;

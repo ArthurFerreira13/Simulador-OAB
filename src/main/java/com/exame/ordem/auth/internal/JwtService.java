@@ -1,5 +1,6 @@
 package com.exame.ordem.auth.internal;
 
+import com.exame.ordem.administradores.dto.AdministradorResumo;
 import com.exame.ordem.auth.dto.TokenResponse;
 import com.exame.ordem.usuarios.dto.UsuarioResumo;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +26,17 @@ public class JwtService {
     }
 
     public TokenResponse gerar(UsuarioResumo usuario) {
+        return gerarToken(usuario.id().toString(), "USER", "USUARIO",
+                usuario.email(), usuario.nome());
+    }
+
+    public TokenResponse gerar(AdministradorResumo admin) {
+        return gerarToken(admin.id().toString(), "ADMIN", "ADMINISTRADOR",
+                admin.email(), admin.nome());
+    }
+
+    private TokenResponse gerarToken(String subject, String role, String tipo,
+                                     String email, String nome) {
         Instant agora = Instant.now();
         Instant expiracao = agora.plus(expirationMinutes, ChronoUnit.MINUTES);
 
@@ -32,10 +44,11 @@ public class JwtService {
                 .issuer(ISSUER)
                 .issuedAt(agora)
                 .expiresAt(expiracao)
-                .subject(usuario.id().toString())
-                .claim("email", usuario.email())
-                .claim("nome", usuario.nome())
-                .claim("role", "USER")
+                .subject(subject)
+                .claim("email", email)
+                .claim("nome", nome)
+                .claim("role", role)
+                .claim("tipo", tipo)
                 .build();
 
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();

@@ -2,6 +2,7 @@
         displayName = "Autenticação",
         allowedDependencies = {
                 "usuarios", "usuarios::dto",
+                "administradores", "administradores::dto",
                 "system"
         }
 )
