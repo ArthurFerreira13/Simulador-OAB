@@ -6,3 +6,6 @@ app:
   # Para testar o rate limit, mude para true, reinicie e rode os testes.
   rate-limit:
     enabled: true
+  logging:
+    level:
+      com.exame.ordem.system.events: debug
