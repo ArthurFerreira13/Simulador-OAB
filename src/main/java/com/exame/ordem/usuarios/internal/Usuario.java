@@ -2,6 +2,7 @@ package com.exame.ordem.usuarios.internal;
 
 import jakarta.persistence.*;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,7 +37,18 @@ public class Usuario {
     @Column(name = "criado_em", nullable = false, updatable = false)
     private LocalDateTime criadoEm = LocalDateTime.now(ZoneOffset.UTC);
 
-    public Usuario() {}
+    @Column(name = "inicio_trial")
+    private Instant inicioTrial;
+
+    @Column(name = "fim_trial")
+    private Instant fimTrial;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "origem_trial", length = 20)
+    private OrigemTrial origemTrial;
+
+    /** Construtor exigido pelo Hibernate. Não usar diretamente. */
+    protected Usuario() {}
 
     public static Usuario criarComSenha(String email, String senhaHash, String nome) {
         Usuario u = new Usuario();
@@ -47,6 +59,12 @@ public class Usuario {
         return u;
     }
 
+    public void iniciarTrial(Instant agora, int dias, OrigemTrial origem) {
+        this.inicioTrial = agora;
+        this.fimTrial = agora.plusSeconds(dias * 86_400L);
+        this.origemTrial = origem;
+    }
+
     public Long getId() { return id; }
     public String getEmail() { return email; }
     public String getSenhaHash() { return senhaHash; }
@@ -55,16 +73,11 @@ public class Usuario {
     public String getNome() { return nome; }
     public LocalDate getDataProvaAlvo() { return dataProvaAlvo; }
     public LocalDateTime getCriadoEm() { return criadoEm; }
+    public Instant getInicioTrial() { return inicioTrial; }
+    public Instant getFimTrial() { return fimTrial; }
+    public OrigemTrial getOrigemTrial() { return origemTrial; }
 
-    public void alterarNome(String novoNome) {
-        this.nome = novoNome;
-    }
-
-    public void alterarDataProvaAlvo(LocalDate novaData) {
-        this.dataProvaAlvo = novaData;
-    }
-
-    public void alterarSenhaHash(String novoSenhaHash) {
-        this.senhaHash = novoSenhaHash;
-    }
+    public void alterarNome(String novoNome) { this.nome = novoNome; }
+    public void alterarDataProvaAlvo(LocalDate novaData) { this.dataProvaAlvo = novaData; }
+    public void alterarSenhaHash(String novoSenhaHash) { this.senhaHash = novoSenhaHash; }
 }

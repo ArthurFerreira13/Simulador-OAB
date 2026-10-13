@@ -1,6 +1,7 @@
 @org.springframework.modulith.ApplicationModule(
         displayName = "Questões",
         allowedDependencies = {
+                "usuarios",
                 "system"
         }
 )

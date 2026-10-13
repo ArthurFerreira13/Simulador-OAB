@@ -1,6 +1,8 @@
 package com.exame.ordem.usuarios.controller;
 
+import com.exame.ordem.usuarios.PoliticaAcessoService;
 import com.exame.ordem.usuarios.UsuarioService;
+import com.exame.ordem.usuarios.dto.AcessoResumo;
 import com.exame.ordem.usuarios.dto.AtualizarPerfilRequest;
 import com.exame.ordem.usuarios.dto.CadastroUsuarioRequest;
 import com.exame.ordem.usuarios.dto.UsuarioResumo;
@@ -15,9 +17,12 @@ import org.springframework.web.bind.annotation.*;
 public class UsuarioController {
 
     private final UsuarioService usuarioService;
+    private final PoliticaAcessoService politicaAcesso;
 
-    UsuarioController(UsuarioService usuarioService) {
+    UsuarioController(UsuarioService usuarioService,
+                      PoliticaAcessoService politicaAcesso) {
         this.usuarioService = usuarioService;
+        this.politicaAcesso = politicaAcesso;
     }
 
     @PostMapping
@@ -42,6 +47,12 @@ public class UsuarioController {
     public ResponseEntity<Void> excluirConta(Authentication auth) {
         usuarioService.excluirConta(usuarioId(auth));
         return ResponseEntity.noContent().build();
+    }
+
+    /** RF12.11 / Doc 04 §7 — estado de acesso para o cliente exibir. */
+    @GetMapping("/acesso")
+    public ResponseEntity<AcessoResumo> consultarAcesso(Authentication auth) {
+        return ResponseEntity.ok(politicaAcesso.consultarAcesso(usuarioId(auth)));
     }
 
     private Long usuarioId(Authentication auth) {

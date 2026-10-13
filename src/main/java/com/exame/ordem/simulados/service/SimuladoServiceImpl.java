@@ -11,6 +11,7 @@ import com.exame.ordem.system.erro.excecoes.ConflitoDeEstadoException;
 import com.exame.ordem.system.erro.excecoes.LimiteExcedidoException;
 import com.exame.ordem.system.erro.excecoes.RecursoNaoEncontradoException;
 import com.exame.ordem.system.erro.excecoes.RegraDeNegocioException;
+import com.exame.ordem.usuarios.PoliticaAcessoService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,7 +19,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -29,21 +29,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Service
 class SimuladoServiceImpl implements SimuladoService {
 
     private static final Logger log = LoggerFactory.getLogger(SimuladoServiceImpl.class);
 
-    private enum Categoria {
-        ACERTO,
-        ERRO,
-        BRANCO
-    }
+    private enum Categoria { ACERTO, ERRO, BRANCO }
 
     private final int tempoLimiteSegundos;
-    private final BigDecimal notaCortePercentual;
-    private final int limiteDiario;
+    private final double notaCortePercentual;
     private final Clock clock;
 
     private final SimuladoSessaoRepository sessaoRepository;
@@ -55,6 +51,7 @@ class SimuladoServiceImpl implements SimuladoService {
     private final SessaoAbandonoHelper sessaoAbandonoHelper;
     private final SimuladoSessaoValidator validator;
     private final SimuladoMapper mapper;
+    private final PoliticaAcessoService politicaAcesso;
 
     SimuladoServiceImpl(SimuladoSessaoRepository sessaoRepository,
                         SimuladoSessaoQuestaoRepository sessaoQuestaoRepository,
@@ -66,9 +63,9 @@ class SimuladoServiceImpl implements SimuladoService {
                         SimuladoSessaoValidator validator,
                         SimuladoMapper mapper,
                         Clock clock,
+                        PoliticaAcessoService politicaAcesso,
                         @Value("${app.simulado.tempo-limite-segundos:18000}") int tempoLimiteSegundos,
-                        @Value("${app.simulado.nota-corte-percentual:50}") int notaCortePercentual,
-                        @Value("${app.simulado.limite-diario:1}") int limiteDiario) {
+                        @Value("${app.simulado.nota-corte-percentual:50}") double notaCortePercentual) {
         this.sessaoRepository = sessaoRepository;
         this.sessaoQuestaoRepository = sessaoQuestaoRepository;
         this.respostaRepository = respostaRepository;
@@ -79,9 +76,9 @@ class SimuladoServiceImpl implements SimuladoService {
         this.validator = validator;
         this.mapper = mapper;
         this.clock = clock;
+        this.politicaAcesso = politicaAcesso;
         this.tempoLimiteSegundos = tempoLimiteSegundos;
-        this.notaCortePercentual = BigDecimal.valueOf(notaCortePercentual);
-        this.limiteDiario = limiteDiario;
+        this.notaCortePercentual = notaCortePercentual;
     }
 
     // ================================================================
@@ -108,29 +105,21 @@ class SimuladoServiceImpl implements SimuladoService {
         }
 
         SimuladoSessao sessao = SimuladoSessao.iniciar(
-                usuarioId, questoes.get(0).provaId(), tempoLimiteSegundos);
+                usuarioId, questoes.getFirst().provaId(), tempoLimiteSegundos);
         sessao = sessaoRepository.save(sessao);
 
-        int ordem = 1;
-        for (QuestaoResumo q : questoes) {
-            sessaoQuestaoRepository.save(new SimuladoSessaoQuestao(sessao.getId(), q.id(), ordem++));
-        }
+        final Long sessaoId = sessao.getId();
+        List<SimuladoSessaoQuestao> vinculos = IntStream.range(0, questoes.size())
+                .mapToObj(i -> new SimuladoSessaoQuestao(sessaoId, questoes.get(i).id(), i + 1))
+                .toList();
+        sessaoQuestaoRepository.saveAll(vinculos);
 
         return mapper.toSessaoDTO(sessao, questoes, Map.of());
     }
 
-    /**
-     * Limite diário (RN14, D13, D30).
-     *
-     * <p>Regras:
-     * <ul>
-     *   <li>{@code limiteDiario <= 0} desliga o limite (dev).</li>
-     *   <li>"Dia" é o dia civil em {@code America/Sao_Paulo} (D30).</li>
-     *   <li>Sessão abandonada sem nenhuma resposta não conta (D13).</li>
-     * </ul>
-     */
     private void verificarLimiteDiario(Long usuarioId) {
-        if (limiteDiario <= 0) {
+        int limite = politicaAcesso.limiteDiarioSimulado(usuarioId);
+        if (limite <= 0) {
             return;
         }
 
@@ -141,7 +130,7 @@ class SimuladoServiceImpl implements SimuladoService {
         long simuladosHoje = sessaoRepository
                 .countComRespostaByUsuarioIdAndIniciadoEmAfter(usuarioId, inicioDoDiaUTC);
 
-        if (simuladosHoje >= limiteDiario) {
+        if (simuladosHoje >= limite) {
             throw new LimiteExcedidoException(
                     "Limite diário de simulados atingido. Assine um plano para acesso ilimitado.");
         }
@@ -187,83 +176,60 @@ class SimuladoServiceImpl implements SimuladoService {
     public ResultadoDTO finalizarSimulado(Long usuarioId, Long sessaoId) {
         SimuladoSessao sessao = validator.buscarSessaoDoUsuario(sessaoId, usuarioId);
 
-        // Idempotência: já finalizada → retorna resultado existente
         if (sessao.getStatus() == StatusSessao.CONCLUIDO) {
             return retornarResultadoExistente(sessaoId);
         }
-
-        // D31/CA-RF03.2-01: sessão expirada pode ser finalizada normalmente
-        // — o candidato é corrigido com as respostas já registradas.
-        // Só sessões ABANDONADAS são recusadas.
         if (sessao.getStatus() != StatusSessao.EM_ANDAMENTO) {
             throw new ConflitoDeEstadoException("Sessão não está em andamento.");
         }
 
-        List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
-                .map(SimuladoSessaoQuestao::getQuestaoId)
-                .toList();
+        ContextoSimulado ctx = carregarContexto(sessaoId);
 
         Map<Integer, Long> gabarito = new HashMap<>();
-        gabaritoService.buscarGabarito(questaoIds)
+        gabaritoService.buscarGabarito(ctx.questaoIds())
                 .forEach(g -> gabarito.put(g.questaoId(), g.alternativaCorretaId()));
 
-        Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
-                .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
-
-        Map<Categoria, Long> contagem = questaoIds.stream()
+        Map<Categoria, Long> contagem = ctx.questaoIds().stream()
                 .collect(Collectors.groupingBy(
-                        qId -> categorizar(qId, respostas, gabarito),
+                        qId -> categorizar(qId, ctx.respostas(), gabarito),
                         Collectors.counting()));
 
         int acertos = contagem.getOrDefault(Categoria.ACERTO, 0L).intValue();
         int erros   = contagem.getOrDefault(Categoria.ERRO,   0L).intValue();
         int brancos = contagem.getOrDefault(Categoria.BRANCO, 0L).intValue();
+        int total   = ctx.questaoIds().size();
 
-        int total = questaoIds.size();
-        BigDecimal percentual = BigDecimal.valueOf(acertos)
-                .divide(BigDecimal.valueOf(total), 4, RoundingMode.HALF_UP)
-                .multiply(BigDecimal.valueOf(100))
-                .setScale(2, RoundingMode.HALF_UP);
-
-        boolean aprovado = percentual.compareTo(notaCortePercentual) >= 0;
+        double percentual = calcularPercentual(acertos, total);
+        boolean aprovado = percentual >= notaCortePercentual;
 
         sessao.finalizar();
         sessaoRepository.save(sessao);
 
         ResultadoSimulado resultado = new ResultadoSimulado(
-                sessaoId, total, acertos, erros, brancos, percentual, aprovado,
+                sessaoId, total, acertos, erros, brancos,
+                BigDecimal.valueOf(percentual),
+                aprovado,
                 (int) sessao.tempoGastoSegundos());
         resultadoRepository.save(resultado);
 
-        return mapper.toResultadoDTO(resultado, questaoIds, respostas);
-    }
-
-    private Categoria categorizar(Integer qId,
-                                  Map<Integer, Long> respostas,
-                                  Map<Integer, Long> gabarito) {
-
-        Long correta = gabarito.get(qId);
-        if (correta == null) {
-            // D03: questões anuladas não aparecem para o candidato e,
-            // portanto, não deveriam chegar aqui. Se chegarem, é sinal
-            // de dado inconsistente — contar como branco e logar.
-            log.debug("Questão {} sem gabarito (anulada) — contada como branco", qId);
-            return Categoria.BRANCO;
-        }
-
-        Long respondida = respostas.get(qId);
-        if (respondida == null) {
-            return Categoria.BRANCO;
-        }
-
-        return correta.equals(respondida) ? Categoria.ACERTO : Categoria.ERRO;
+        return mapper.toResultadoDTO(resultado, ctx.questaoIds(), ctx.respostas());
     }
 
     private ResultadoDTO retornarResultadoExistente(Long sessaoId) {
         ResultadoSimulado existente = resultadoRepository.findBySessaoId(sessaoId)
                 .orElseThrow(() -> new ConflitoDeEstadoException(
-                        "Sessão concluída sem resultado persistido. Contate o suporte."));
+                        "Sessão concluída sem resultado persistido. Acione o suporte."));
 
+        ContextoSimulado ctx = carregarContexto(sessaoId);
+        return mapper.toResultadoDTO(existente, ctx.questaoIds(), ctx.respostas());
+    }
+
+    /**
+     * Carrega os IDs das questões da sessão e o mapa de respostas.
+     * Extraído para eliminar a duplicação entre {@link #finalizarSimulado}
+     * e {@link #retornarResultadoExistente}.
+     */
+    private ContextoSimulado carregarContexto(Long sessaoId) {
         List<Integer> questaoIds = sessaoQuestaoRepository.findBySessaoIdOrderByOrdemAsc(sessaoId).stream()
                 .map(SimuladoSessaoQuestao::getQuestaoId)
                 .toList();
@@ -271,7 +237,40 @@ class SimuladoServiceImpl implements SimuladoService {
         Map<Integer, Long> respostas = respostaRepository.findBySessaoId(sessaoId).stream()
                 .collect(Collectors.toMap(RespostaSimulado::getQuestaoId, RespostaSimulado::getAlternativaId));
 
-        return mapper.toResultadoDTO(existente, questaoIds, respostas);
+        return new ContextoSimulado(questaoIds, respostas);
+    }
+
+    private record ContextoSimulado(List<Integer> questaoIds, Map<Integer, Long> respostas) {}
+
+    /**
+     * Percentual com 2 casas decimais, arredondado para o mais próximo.
+     * Ex.: 33 acertos em 80 questões → 41.25
+     */
+    private double calcularPercentual(int acertos, int total) {
+        if (total == 0) {
+            return 0.0;
+        }
+        return Math.round((acertos * 10_000.0) / total) / 100.0;
+    }
+
+    /**
+     * Classifica uma questão em ACERTO, ERRO ou BRANCO (D03/RN04).
+     * Anuladas não chegam aqui (filtradas na query); se chegarem, é
+     * sinal de dado inconsistente — conta como BRANCO e loga.
+     */
+    private Categoria categorizar(Integer qId,
+                                  Map<Integer, Long> respostas,
+                                  Map<Integer, Long> gabarito) {
+        Long correta = gabarito.get(qId);
+        if (correta == null) {
+            log.debug("Questão {} sem gabarito (anulada) — contada como branco", qId);
+            return Categoria.BRANCO;
+        }
+        Long respondida = respostas.get(qId);
+        if (respondida == null) {
+            return Categoria.BRANCO;
+        }
+        return correta.equals(respondida) ? Categoria.ACERTO : Categoria.ERRO;
     }
 
     // ================================================================
