@@ -1,18 +1,15 @@
-app:
-  admin:
-    chave-cadastro: dev-chave-local-nao-usar-em-producao
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/banco_oab_dev
+    username: postgres
+    password: admin
 
-  jwt:
-    secret: dev-secret-com-pelo-menos-32-bytes-para-hs256-ok
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
 
-  simulado:
-    limite-diario: 0
-
-  # Rate limit DESLIGADO em dev para não atrapalhar testes manuais.
-  rate-limit:
-    enabled: false
-
-# Fora de app:, no nível raiz
 logging:
   level:
-    com.exame.ordem.system.events: debug
+    org.hibernate.SQL: info

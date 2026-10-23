@@ -1,11 +1,16 @@
 spring:
   application:
     name: ordem
+  threads:
+    virtual:
+      enabled: true
+  config:
+    import: optional:file:.env[.properties]
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/banco_oab_dev
-    username: postgres
-    password: admin
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/banco_oab_dev}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:admin}
 
   jpa:
     hibernate:
@@ -40,33 +45,146 @@ app:
     secret: ${JWT_SECRET}
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:240}
 
-  # ─────────────────────────────────────────────────────────
-  # Rate limit (bucket4j, em memória)
-  # ─────────────────────────────────────────────────────────
   rate-limit:
     enabled: true
     rules:
       login:
-        capacity: 5       # 5 tentativas de login
-        window: 1m        # por minuto, por IP
+        capacity: 5
+        window: 1m
       cadastro:
-        capacity: 3       # 3 cadastros
-        window: 1h        # por hora, por IP
+        capacity: 3
+        window: 1h
 
-  # ─────────────────────────────────────────────────────────
-  # Parâmetros de simulado (RN02, RN03)
-  # ─────────────────────────────────────────────────────────
   simulado:
-    tempo-limite-segundos: ${SIMULADO_TEMPO_LIMITE:18000}   # 5h
-    nota-corte-percentual: ${SIMULADO_NOTA_CORTE:50}        # 50% = 40/80
-    limite-diario: ${SIMULADO_LIMITE_DIARIO:1}              # produção: 1/dia
+    tempo-limite-segundos: ${SIMULADO_TEMPO_LIMITE:18000}
+    nota-corte-percentual: ${SIMULADO_NOTA_CORTE:50}
+    limite-diario: ${SIMULADO_LIMITE_DIARIO:1}
 
-  # ─────────────────────────────────────────────────────────
-  # Trial reverso (D11)
-  # ─────────────────────────────────────────────────────────
   trial:
     dias: ${TRIAL_DIAS:7}
 
+  tutor:
+    # Cascata de chat: a ordem desta lista é a prioridade.
+    # Provedor sem api-key é ignorado automaticamente.
+    # rpm/rpd/tpm/tpd: tetos locais, com margem abaixo do free tier (0 = sem limite local).
+    # Confira os limites reais no painel de cada provedor; eles mudam com frequência.
+    # Cada provedor deve usar uma chave própria (não repita a mesma chave em dois itens).
+    cascata:
+      provedores:
+        - id: groq
+          base-url: https://api.groq.com/openai/v1
+          api-key: ${GROQ_API_KEY:}
+          model: ${GROQ_MODEL:openai/gpt-oss-120b}
+          ttft: 8s
+          timeout: 45s
+          rpm: 25
+          rpd: 900
+          tpm: 7000
+          tpd: 180000
+        - id: cerebras
+          base-url: https://api.cerebras.ai/v1
+          api-key: ${CEREBRAS_API_KEY:}
+          model: ${CEREBRAS_MODEL:gpt-oss-120b}   # confirme o ID na lista de modelos do painel
+          ttft: 8s
+          timeout: 45s
+          rpm: 25
+          rpd: 5000
+        - id: gemini
+          base-url: https://generativelanguage.googleapis.com/v1beta/openai
+          api-key: ${GEMINI_API_KEY:}
+          model: ${GEMINI_CHAT_MODEL:gemini-2.5-flash}
+          ttft: 12s
+          timeout: 60s
+          rpm: 8
+          rpd: 400
+        - id: mistral
+          base-url: https://api.mistral.ai/v1
+          api-key: ${MISTRAL_API_KEY:}
+          model: ${MISTRAL_MODEL:mistral-small-latest}
+          ttft: 12s
+          timeout: 45s
+          rpm: 50
+          rpd: 500
+        - id: nvidia
+          base-url: https://integrate.api.nvidia.com/v1
+          api-key: ${NVIDIA_API_KEY:}
+          model: ${NVIDIA_MODEL:meta/llama-3.3-70b-instruct}   # confirme o ID no catálogo do build.nvidia.com
+          ttft: 15s
+          timeout: 90s
+          rpm: 30
+        - id: cohere
+          base-url: https://api.cohere.ai/compatibility/v1
+          api-key: ${COHERE_API_KEY:}
+          model: ${COHERE_MODEL:command-a-03-2025}   # chave trial: ~1000 chamadas/mês
+          ttft: 10s
+          timeout: 60s
+          rpm: 15
+          rpd: 30
+        - id: openrouter
+          base-url: https://openrouter.ai/api/v1
+          api-key: ${OPENROUTER_API_KEY:}
+          model: ${OPENROUTER_MODEL:deepseek/deepseek-r1:free}
+          temperature: 0.6
+          max-tokens: 4096
+          ttft: 25s
+          timeout: 120s
+          rpm: 15
+          rpd: 45
+          headers:
+            HTTP-Referer: http://localhost:8080
+            X-Title: Simulador OAB
+        # Proxy FreeLLMAPI (Docker, porta 3001). Sem FREELLMAPI_API_KEY é ignorado.
+        # Sem rpm/rpd/tpm/tpd: o proxy já controla os limites por chave.
+        # No dashboard do proxy, use só provedores que NÃO estão acima (ex.: Cloudflare,
+        # HuggingFace, Z.ai), para não dividir o limite da mesma chave entre dois caminhos.
+        - id: freellmapi
+          base-url: ${FREELLMAPI_URL:http://localhost:3001/v1}
+          api-key: ${FREELLMAPI_API_KEY:}
+          model: ${FREELLMAPI_MODEL:auto}
+          ttft: 20s
+          timeout: 90s
+
+    # Fallback local opcional. Para ativar, defina
+    # OLLAMA_CHAT_HABILITADO=true e execute:
+    # ollama pull llama3.1:8b
+    ollama-chat:
+      habilitado: ${OLLAMA_CHAT_HABILITADO:false}
+      url: ${OLLAMA_URL:http://localhost:11434}
+      model: ${OLLAMA_CHAT_MODEL:llama3.1:8b}
+
+    # Indexação de embeddings (roda 1× na subida da app).
+    # Cada runner só é criado se a flag correspondente for "true".
+    # Lembre de desligar depois que a tabela estiver cheia.
+    gemini-indexador:
+      habilitado: ${GEMINI_INDEXADOR_HABILITADO:false}
+
+    ollama-indexador:
+      habilitado: ${OLLAMA_INDEXADOR_HABILITADO:false}
+
+    embedding:
+      gemini-api-key: ${GEMINI_API_KEY:}
+      model: ${TUTOR_EMBEDDING_MODEL:gemini-embedding-001}
+      ollama-url: ${OLLAMA_URL:http://localhost:11434}
+      ollama-model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+
+    # O pgvector usa o mesmo DataSource de spring.datasource.*.
+    # Parâmetros otimizados para redução de tokens e economia de contexto.
+    rag:
+      top-k-semelhantes: ${RAG_TOP_K_SEMELHANTES:2}
+      candidatos: ${RAG_CANDIDATOS:8}
+      min-score-gemini: ${RAG_MIN_SCORE_GEMINI:0.75}
+      min-score-ollama: ${RAG_MIN_SCORE_OLLAMA:0.70}
+      status-bloqueados: ${RAG_STATUS_BLOQUEADOS:ERRADO,SUSPEITO}
+      max-caracteres-por-fonte: ${RAG_MAX_CARACTERES_FONTE:1000}
+      ollama-habilitado: ${RAG_OLLAMA_HABILITADO:true}   # em produção: RAG_OLLAMA_HABILITADO=false
+
+# Supabase Storage para backup de PDFs
+supabase:
+  url: ${SUPABASE_URL:}
+  key: ${SUPABASE_KEY:}
+  bucket: ${SUPABASE_BUCKET:simulado-prova}
+
+# Actuator
 management:
   endpoints:
     web:

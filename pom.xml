@@ -29,6 +29,8 @@
 		<!-- Bibliotecas sem gerenciamento adequado pelo parent do Spring Boot. -->
 		<jsoup.version>1.18.1</jsoup.version>
 		<bucket4j.version>8.10.1</bucket4j.version>
+		<!-- Circuit breaker por provedor de LLM (cascata do tutor). Fora do BOM do Spring Boot. -->
+		<resilience4j.version>2.3.0</resilience4j.version>
 
 		<!-- Alinhamento do ecossistema JUnit. -->
 		<junit-jupiter.version>6.0.3</junit-jupiter.version>
@@ -70,6 +72,7 @@
                 - langchain4j-spring-boot4-starter: 1.20.0-beta30
                 - langchain4j-open-ai-spring-boot4-starter: 1.20.0-beta30
                 - langchain4j-pgvector: 1.20.0-beta30
+                - langchain4j-ollama: 1.20.0-beta30
                 - langchain4j-jackson3: 1.20.0-beta30
             -->
 			<dependency>
@@ -154,7 +157,7 @@
 			<artifactId>spring-modulith-starter-jpa</artifactId>
 		</dependency>
 
-		<!-- LangChain4j: Spring Boot 4, OpenAI e PGvector -->
+		<!-- LangChain4j: Spring Boot 4, OpenAI, PGvector, Ollama e Google GenAI -->
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
 			<artifactId>langchain4j-spring-boot4-starter</artifactId>
@@ -166,6 +169,28 @@
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
 			<artifactId>langchain4j-pgvector</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-ollama</artifactId>
+			<exclusions>
+				<!--
+					O Ollama puxa o JDK HttpClient como default. Em Spring Boot
+					o cliente correto é o SpringRestClientBuilderFactory (que
+					vem do langchain4j-spring-boot4-starter). Sem a exclusão,
+					o LangChain4j acha dois builders no classpath e falha com
+					"Conflict: multiple HTTP clients have been found".
+				-->
+				<exclusion>
+					<groupId>dev.langchain4j</groupId>
+					<artifactId>langchain4j-http-client-jdk</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-google-genai</artifactId>
+			<version>1.20.0-beta30</version>
 		</dependency>
 		<!-- Faz o LangChain4j usar Jackson 3, como o Spring Boot 4. -->
 		<dependency>
@@ -185,6 +210,12 @@
 			<groupId>com.bucket4j</groupId>
 			<artifactId>bucket4j-core</artifactId>
 			<version>${bucket4j.version}</version>
+		</dependency>
+		<!-- Circuit breaker da cascata de LLM do tutor -->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-circuitbreaker</artifactId>
+			<version>${resilience4j.version}</version>
 		</dependency>
 		<!-- Caffeine: cache com expiração para o rate limit (Bug 4) -->
 		<dependency>
