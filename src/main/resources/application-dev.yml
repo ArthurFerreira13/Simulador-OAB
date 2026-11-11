@@ -3,6 +3,12 @@ spring:
     url: jdbc:postgresql://localhost:5432/banco_oab_dev
     username: postgres
     password: admin
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:30}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      connection-timeout: 5000
+      validation-timeout: 5000
+      leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}
 
   jpa:
     show-sql: false
@@ -13,3 +19,8 @@ spring:
 logging:
   level:
     org.hibernate.SQL: info
+
+app:
+  tutor:
+    freellmapi:
+      autostart: true

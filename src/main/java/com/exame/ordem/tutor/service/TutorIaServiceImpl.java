@@ -9,7 +9,6 @@ import com.exame.ordem.tutor.config.RagProperties;
 import com.exame.ordem.tutor.dto.UsoTutorResumo;
 import com.exame.ordem.tutor.internal.FonteRag;
 import com.exame.ordem.tutor.internal.UsoTutorDia;
-import com.exame.ordem.tutor.internal.UsoTutorDiaRepository;
 import com.exame.ordem.usuarios.PoliticaAcessoService;
 import com.exame.ordem.usuarios.RecursoAcesso;
 import dev.langchain4j.data.message.ChatMessage;
@@ -20,6 +19,7 @@ import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -27,20 +27,24 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Orquestra o fluxo sem manter uma transação aberta durante RAG, rede/LLM ou SSE.
+ * Operações de cota são delegadas a CotaTutorTransacionalService, outro bean Spring.
+ */
 @Service
-@Transactional(readOnly = true)
 class TutorIaServiceImpl implements TutorIaService {
 
     private static final Logger log = LoggerFactory.getLogger(TutorIaServiceImpl.class);
 
-    private static final int  LIMITE_TRIAL_MSG    = 30;
+    private static final int LIMITE_TRIAL_MSG = 3000;
     private static final long LIMITE_TRIAL_TOKENS = 40_000L;
-    private static final int  LIMITE_PAGO_MSG     = 60;
-    private static final long LIMITE_PAGO_TOKENS  = 80_000L;
-    private static final long SSE_TIMEOUT_MS      = 120_000L;
+    private static final int LIMITE_PAGO_MSG = 60;
+    private static final long LIMITE_PAGO_TOKENS = 80_000L;
+    private static final long SSE_TIMEOUT_MS = 120_000L;
 
-    private final UsoTutorDiaRepository usoRepository;
+    private final CotaTutorTransacionalService cotaService;
     private final PoliticaAcessoService politicaAcesso;
     private final QuestoesQueryService questoesQuery;
     private final LlmProvider llm;
@@ -49,14 +53,14 @@ class TutorIaServiceImpl implements TutorIaService {
     private final Clock clock;
 
     TutorIaServiceImpl(
-            UsoTutorDiaRepository usoRepository,
+            CotaTutorTransacionalService cotaService,
             PoliticaAcessoService politicaAcesso,
             QuestoesQueryService questoesQuery,
             LlmProvider llm,
             RagProviderResolver ragResolver,
             RagProperties ragProps,
             Clock clock) {
-        this.usoRepository = usoRepository;
+        this.cotaService = cotaService;
         this.politicaAcesso = politicaAcesso;
         this.questoesQuery = questoesQuery;
         this.llm = llm;
@@ -65,8 +69,12 @@ class TutorIaServiceImpl implements TutorIaService {
         this.clock = clock;
     }
 
+    /**
+     * NOT_SUPPORTED suspende qualquer transação herdada do chamador durante este método.
+     * As operações de cota são executadas em transações curtas pelo bean auxiliar.
+     */
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public SseEmitter conversar(Long usuarioId, Integer questaoId, String mensagem) {
         if (!politicaAcesso.permite(usuarioId, RecursoAcesso.TUTOR)) {
             throw new RegraDeNegocioException(
@@ -75,34 +83,49 @@ class TutorIaServiceImpl implements TutorIaService {
 
         Limites limites = limitesPara(usuarioId);
         LocalDate hoje = LocalDate.now(clock);
+        cotaService.reservar(usuarioId, hoje, limites.mensagens(), limites.tokens());
 
-        // Reserva atômica ANTES de gastar LLM/RAG. Se algo abaixo lançar exceção, a transação
-        // desfaz a reserva junto.
-        reservarCota(usuarioId, hoje, limites);
+        // A reserva já foi confirmada em uma transação curta. Qualquer falha síncrona
+        // antes de entregar o controle ao stream precisa compensá-la.
+        try {
+            QuestaoResumo questao = questoesQuery.buscarQuestaoPorId(questaoId);
+            List<FonteRag> fontes = ragResolver.buscar(mensagem, questaoId);
 
-        QuestaoResumo questao = questoesQuery.buscarQuestaoPorId(questaoId);
+            List<ChatMessage> mensagens = List.of(
+                    SystemMessage.from(montarSystemPrompt()),
+                    UserMessage.from(montarUserPrompt(questao, mensagem, fontes)));
 
-        // Comentários da própria questão + semelhantes (já sem os de triagem ERRADO/SUSPEITO)
-        List<FonteRag> fontes = ragResolver.buscar(mensagem, questaoId);
+            SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
+            emitter.onTimeout(emitter::complete);
+            SseStreamingHandler handler = new SseStreamingHandler(emitter, usuarioId, hoje);
+            enviarMeta(emitter, fontes);
 
-        // System e user em mensagens separadas: Llama/Mistral seguem melhor o papel "system",
-        // e a pergunta do aluno deixa de ficar colada às regras do tutor.
-        List<ChatMessage> mensagens = List.of(
-                SystemMessage.from(montarSystemPrompt()),
-                UserMessage.from(montarUserPrompt(questao, mensagem, fontes)));
-
-        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
-        emitter.onTimeout(emitter::complete);
-        enviarMeta(emitter, fontes); // RN09: o cliente sabe, antes do primeiro token, se há fonte
-        llm.streaming().chat(mensagens, new SseStreamingHandler(emitter, usuarioId, hoje));
-        return emitter;
+            try {
+                // O método deve iniciar o streaming e retornar sem aguardar toda a resposta.
+                llm.streaming().chat(mensagens, handler);
+            } catch (Exception e) {
+                // Usa o mesmo caminho idempotente do callback; evita deixar a reserva presa.
+                handler.onError(e);
+            }
+            return emitter;
+        } catch (RuntimeException e) {
+            try {
+                cotaService.estornar(usuarioId, hoje, LocalDateTime.now(clock));
+            } catch (Exception estornoError) {
+                e.addSuppressed(estornoError);
+                log.error("Falha ao estornar cota após erro síncrono antes do stream; usuarioId={}", usuarioId,
+                        estornoError);
+            }
+            throw e;
+        }
     }
 
     @Override
+    @Transactional(readOnly = true, propagation = Propagation.NOT_SUPPORTED)
     public UsoTutorResumo consultarUso(Long usuarioId) {
         Limites limites = limitesPara(usuarioId);
         LocalDate hoje = LocalDate.now(clock);
-        UsoTutorDia uso = usoRepository.findByUsuarioIdAndData(usuarioId, hoje).orElse(null);
+        UsoTutorDia uso = cotaService.consultar(usuarioId, hoje);
 
         int usadas = uso != null ? uso.getContador() : 0;
         long tokens = uso != null ? uso.getTokens() : 0L;
@@ -113,27 +136,10 @@ class TutorIaServiceImpl implements TutorIaService {
                 Math.max(0, limites.mensagens() - usadas));
     }
 
-    private void reservarCota(Long usuarioId, LocalDate hoje, Limites limites) {
-        LocalDateTime agora = LocalDateTime.now(clock);
-        usoRepository.garantirLinha(usuarioId, hoje, agora);
-
-        int reservou = usoRepository.reservar(
-                usuarioId, hoje, limites.mensagens(), limites.tokens(), agora);
-        if (reservou == 0) {
-            UsoTutorDia uso = usoRepository.findByUsuarioIdAndData(usuarioId, hoje).orElseThrow();
-            if (uso.getContador() >= limites.mensagens()) {
-                throw new RegraDeNegocioException(
-                        "Limite diário de mensagens do tutor atingido (" + limites.mensagens() + ").");
-            }
-            throw new RegraDeNegocioException(
-                    "Limite diário de tokens do tutor atingido (" + limites.tokens() + ").");
-        }
-    }
-
     private Limites limitesPara(Long usuarioId) {
         return switch (politicaAcesso.estadoDe(usuarioId)) {
             case TRIAL -> new Limites(LIMITE_TRIAL_MSG, LIMITE_TRIAL_TOKENS);
-            case PAGO  -> new Limites(LIMITE_PAGO_MSG, LIMITE_PAGO_TOKENS);
+            case PAGO -> new Limites(LIMITE_PAGO_MSG, LIMITE_PAGO_TOKENS);
             case GRATUITO -> new Limites(0, 0);
         };
     }
@@ -171,14 +177,11 @@ class TutorIaServiceImpl implements TutorIaService {
                 """;
     }
 
-
-
     private String montarUserPrompt(QuestaoResumo questao, String pergunta, List<FonteRag> fontes) {
         StringBuilder sb = new StringBuilder();
         sb.append("Questão ").append(questao.numero())
                 .append(" — ").append(questao.disciplina()).append("\n\n");
         sb.append("Enunciado:\n").append(questao.enunciado()).append("\n\n");
-
         sb.append("Alternativas:\n");
         questao.alternativas().forEach(a ->
                 sb.append(a.letra()).append(") ").append(a.texto()).append("\n"));
@@ -193,7 +196,6 @@ class TutorIaServiceImpl implements TutorIaService {
         } else {
             sb.append("\n(Nenhum comentário de apoio disponível.)\n");
         }
-
         sb.append("\nPergunta: ").append(pergunta);
         return sb.toString();
     }
@@ -210,16 +212,14 @@ class TutorIaServiceImpl implements TutorIaService {
         return texto.length() <= max ? texto : texto.substring(0, max) + "…";
     }
 
-    /** Evento "meta" (RN09): só ids, letra e origem. O texto dos comentários não vai ao cliente. */
+    /** Evento meta contém só ids, letra e origem; texto dos comentários não é enviado ao cliente. */
     private void enviarMeta(SseEmitter emitter, List<FonteRag> fontes) {
         StringBuilder json = new StringBuilder("{\"semFonte\":").append(fontes.isEmpty())
                 .append(",\"quantidade\":").append(fontes.size())
                 .append(",\"fontes\":[");
         for (int i = 0; i < fontes.size(); i++) {
             FonteRag f = fontes.get(i);
-            if (i > 0) {
-                json.append(',');
-            }
+            if (i > 0) json.append(',');
             json.append("{\"alternativaId\":").append(f.alternativaId())
                     .append(",\"questaoId\":").append(f.questaoId())
                     .append(",\"letra\":").append(jsonLetra(f.letra()))
@@ -237,11 +237,10 @@ class TutorIaServiceImpl implements TutorIaService {
         return letra != null && letra.matches("[A-Za-z]") ? "\"" + letra + "\"" : "null";
     }
 
-    /** Consumo real informado pelo provedor; estimativa por tamanho só quando ele não informa. */
     private static int tokensConsumidos(ChatResponse response, int caracteresGerados) {
-        var u = response.tokenUsage();
-        if (u != null && u.totalTokenCount() != null && u.totalTokenCount() > 0) {
-            return u.totalTokenCount();
+        var usage = response.tokenUsage();
+        if (usage != null && usage.totalTokenCount() != null && usage.totalTokenCount() > 0) {
+            return usage.totalTokenCount();
         }
         return Math.max(1, caracteresGerados / 4);
     }
@@ -251,8 +250,9 @@ class TutorIaServiceImpl implements TutorIaService {
     private class SseStreamingHandler implements StreamingChatResponseHandler {
         private final SseEmitter emitter;
         private final Long usuarioId;
-        private final LocalDate dia; // dia da reserva: o fechamento usa o mesmo dia, mesmo virando a meia-noite
+        private final LocalDate dia;
         private final StringBuilder buffer = new StringBuilder();
+        private final AtomicBoolean finalizado = new AtomicBoolean(false);
         private volatile boolean clienteConectado = true;
 
         SseStreamingHandler(SseEmitter emitter, Long usuarioId, LocalDate dia) {
@@ -263,10 +263,8 @@ class TutorIaServiceImpl implements TutorIaService {
 
         @Override
         public void onPartialResponse(String partial) {
-            buffer.append(partial); // continua somando: o consumo é cobrado mesmo sem cliente
-            if (!clienteConectado) {
-                return;
-            }
+            buffer.append(partial);
+            if (!clienteConectado) return;
             try {
                 emitter.send(SseEmitter.event().name("delta").data(partial));
             } catch (Exception e) {
@@ -277,40 +275,38 @@ class TutorIaServiceImpl implements TutorIaService {
 
         @Override
         public void onCompleteResponse(ChatResponse response) {
+            if (!finalizado.compareAndSet(false, true)) return;
             try {
                 int tokens = tokensConsumidos(response, buffer.length());
-                usoRepository.somarTokens(usuarioId, dia, tokens, LocalDateTime.now(clock));
-
+                cotaService.somarTokens(usuarioId, dia, tokens, LocalDateTime.now(clock));
                 if (clienteConectado) {
                     emitter.send(SseEmitter.event().name("completed")
                             .data("{\"tokens\":" + tokens + "}"));
                     emitter.complete();
                 }
             } catch (Exception e) {
-                log.warn("Falha ao finalizar SSE", e);
+                log.warn("Falha ao finalizar SSE ou atualizar cota", e);
                 emitter.completeWithError(e);
             }
         }
 
         @Override
         public void onError(Throwable error) {
-            log.warn("Erro do LLM: {}", error.getMessage());
+            if (!finalizado.compareAndSet(false, true)) return;
+            log.warn("Erro do LLM", error);
             try {
                 LocalDateTime agora = LocalDateTime.now(clock);
                 if (buffer.length() == 0) {
-                    usoRepository.estornar(usuarioId, dia, agora); // nada entregue: devolve a mensagem
+                    cotaService.estornar(usuarioId, dia, agora);
                 } else {
-                    usoRepository.somarTokens(usuarioId, dia, Math.max(1, buffer.length() / 4), agora);
+                    cotaService.somarTokens(usuarioId, dia, Math.max(1, buffer.length() / 4), agora);
                 }
             } catch (Exception e) {
                 log.warn("Falha ao ajustar a cota após erro do LLM", e);
             }
-            if (!clienteConectado) {
-                return;
-            }
+            if (!clienteConectado) return;
             try {
-                emitter.send(SseEmitter.event().name("error")
-                        .data("Tutor indisponível no momento."));
+                emitter.send(SseEmitter.event().name("error").data("Tutor indisponível no momento."));
                 emitter.complete();
             } catch (Exception e) {
                 emitter.completeWithError(e);

@@ -11,6 +11,13 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/banco_oab_dev}
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:admin}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:30}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      connection-timeout: 5000
+      validation-timeout: 5000
+      leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}
+
 
   jpa:
     hibernate:
@@ -36,6 +43,7 @@ logging:
   level:
     org.hibernate.SQL: debug
     org.flywaydb: info
+    com.exame.ordem.tutor.service.ProvedorPingService: debug
 
 app:
   admin:
@@ -64,14 +72,12 @@ app:
     dias: ${TRIAL_DIAS:7}
 
   tutor:
-    # Cascata de chat: a ordem desta lista é a prioridade.
-    # Provedor sem api-key é ignorado automaticamente.
-    # rpm/rpd/tpm/tpd: tetos locais, com margem abaixo do free tier (0 = sem limite local).
-    # Confira os limites reais no painel de cada provedor; eles mudam com frequência.
-    # Cada provedor deve usar uma chave própria (não repita a mesma chave em dois itens).
     cascata:
       provedores:
-        - id: groq
+        # ==========================================
+        # TIER 1: ULTRA-RÁPIDOS
+        # ==========================================
+        - id: groq-1
           base-url: https://api.groq.com/openai/v1
           api-key: ${GROQ_API_KEY:}
           model: ${GROQ_MODEL:openai/gpt-oss-120b}
@@ -81,49 +87,100 @@ app:
           rpd: 900
           tpm: 7000
           tpd: 180000
-        - id: cerebras
-          base-url: https://api.cerebras.ai/v1
-          api-key: ${CEREBRAS_API_KEY:}
-          model: ${CEREBRAS_MODEL:gpt-oss-120b}   # confirme o ID na lista de modelos do painel
+
+        - id: groq-2
+          base-url: https://api.groq.com/openai/v1
+          api-key: ${GROQ_API_KEY_1:}
+          model: ${GROQ_MODEL:openai/gpt-oss-120b}
           ttft: 8s
           timeout: 45s
           rpm: 25
-          rpd: 5000
-        - id: gemini
+          rpd: 900
+          tpm: 7000
+          tpd: 180000
+
+        - id: sambanova
+          base-url: https://api.sambanova.ai/v1
+          api-key: ${SAMBANOVA_API_KEY:}
+          model: ${SAMBANOVA_MODEL:gpt-oss-120b}
+          ttft: 10s
+          timeout: 45s
+          rpm: 10
+          rpd: 1000
+
+        # ==========================================
+        # TIER 2: ESTÁVEIS
+        # ==========================================
+        # ==========================================
+        # TIER 2: ESTÁVEIS (NVIDIA)
+        # ==========================================
+        - id: nvidia-1
+          base-url: https://integrate.api.nvidia.com/v1
+          api-key: ${NVIDIA_API_KEY:}
+          model: meta/llama-3.1-8b-instruct         # Modelo leve e rápido
+          ttft: 15s
+          timeout: 90s
+          rpm: 30
+
+        - id: nvidia-2
+          base-url: https://integrate.api.nvidia.com/v1
+          api-key: ${NVIDIA_API_KEY:}
+          model: google/gemma-2-9b-it               # Modelo do Google (Fallback 1)
+          ttft: 15s
+          timeout: 90s
+          rpm: 30
+
+        - id: nvidia-3
+          base-url: https://integrate.api.nvidia.com/v1
+          api-key: ${NVIDIA_API_KEY:}
+          model: mistralai/mistral-nemo-12b-instruct # Modelo da Mistral (Fallback 2)
+          ttft: 15s
+          timeout: 90s
+          rpm: 30
+
+        - id: gemini-1
           base-url: https://generativelanguage.googleapis.com/v1beta/openai
           api-key: ${GEMINI_API_KEY:}
-          model: ${GEMINI_CHAT_MODEL:gemini-2.5-flash}
+          model: ${GEMINI_CHAT_MODEL:gemini-3.5-flash-lite}
           ttft: 12s
           timeout: 60s
           rpm: 8
           rpd: 400
-        - id: mistral
+
+        - id: gemini-2
+          base-url: https://generativelanguage.googleapis.com/v1beta/openai
+          api-key: ${GEMINI_API_KEY_1:}
+          model: ${GEMINI_CHAT_MODEL:gemini-3.5-flash-lite}
+          ttft: 12s
+          timeout: 60s
+          rpm: 8
+          rpd: 400
+
+        - id: mistral-1
           base-url: https://api.mistral.ai/v1
           api-key: ${MISTRAL_API_KEY:}
-          model: ${MISTRAL_MODEL:mistral-small-latest}
+          model: ${MISTRAL_MODEL:open-mistral-nemo}
           ttft: 12s
           timeout: 45s
-          rpm: 50
-          rpd: 500
-        - id: nvidia
-          base-url: https://integrate.api.nvidia.com/v1
-          api-key: ${NVIDIA_API_KEY:}
-          model: ${NVIDIA_MODEL:meta/llama-3.3-70b-instruct}   # confirme o ID no catálogo do build.nvidia.com
-          ttft: 15s
-          timeout: 90s
-          rpm: 30
-        - id: cohere
-          base-url: https://api.cohere.ai/compatibility/v1
-          api-key: ${COHERE_API_KEY:}
-          model: ${COHERE_MODEL:command-a-03-2025}   # chave trial: ~1000 chamadas/mês
-          ttft: 10s
-          timeout: 60s
-          rpm: 15
-          rpd: 30
-        - id: openrouter
+          rpm: 150
+          rpd: 3000
+
+        - id: mistral-2
+          base-url: https://api.mistral.ai/v1
+          api-key: ${MISTRAL_API_KEY_1:}
+          model: ${MISTRAL_MODEL:open-mistral-nemo}
+          ttft: 12s
+          timeout: 45s
+          rpm: 150
+          rpd: 3000
+
+        # ==========================================
+        # TIER 3: FALLBACKS
+        # ==========================================
+        - id: openrouter-1
           base-url: https://openrouter.ai/api/v1
           api-key: ${OPENROUTER_API_KEY:}
-          model: ${OPENROUTER_MODEL:deepseek/deepseek-r1:free}
+          model: ${OPENROUTER_MODEL:nvidia/nemotron-3-ultra-550b-a55b:free}
           temperature: 0.6
           max-tokens: 4096
           ttft: 25s
@@ -133,33 +190,82 @@ app:
           headers:
             HTTP-Referer: http://localhost:8080
             X-Title: Simulador OAB
-        # Proxy FreeLLMAPI (Docker, porta 3001). Sem FREELLMAPI_API_KEY é ignorado.
-        # Sem rpm/rpd/tpm/tpd: o proxy já controla os limites por chave.
-        # No dashboard do proxy, use só provedores que NÃO estão acima (ex.: Cloudflare,
-        # HuggingFace, Z.ai), para não dividir o limite da mesma chave entre dois caminhos.
+
+        - id: openrouter-2
+          base-url: https://openrouter.ai/api/v1
+          api-key: ${OPENROUTER_API_KEY_1:}
+          model: ${OPENROUTER_MODEL:google/gemma-4-31b-it}
+          temperature: 0.6
+          max-tokens: 4096
+          ttft: 25s
+          timeout: 120s
+          rpm: 15
+          rpd: 45
+          headers:
+            HTTP-Referer: http://localhost:8080
+            X-Title: Simulador OAB
+
+        # [NOVO] ping-url corrigido para o endpoint oficial de busca da Cloudflare
+        - id: cloudflare-1
+          base-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1
+          ping-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/models/search
+          api-key: ${CLOUDFLARE_API_KEY:}
+          model: "@cf/meta/llama-3.1-70b-instruct"
+          ttft: 20s
+          timeout: 60s
+          rpm: 20
+          rpd: 1000
+
+        - id: cloudflare-2
+          base-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID_1}/ai/v1
+          ping-url: https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID_1}/ai/models/search
+          api-key: ${CLOUDFLARE_API_KEY_1:}
+          model: "@cf/meta/llama-3.1-70b-instruct"
+          ttft: 20s
+          timeout: 60s
+          rpm: 20
+          rpd: 1000
+
+        - id: cohere-1
+          base-url: https://api.cohere.ai/compatibility/v1
+          api-key: ${COHERE_API_KEY:}
+          model: ${COHERE_MODEL:command-a-03-2025}
+          ttft: 25s
+          timeout: 60s
+          rpm: 5
+          rpd: 30
+
+        - id: cohere-2
+          base-url: https://api.cohere.ai/compatibility/v1
+          api-key: ${COHERE_API_KEY_1:}
+          model: ${COHERE_MODEL:command-a-03-2025}
+          ttft: 25s
+          timeout: 60s
+          rpm: 5
+          rpd: 30
+
+        # ==========================================
+        # TIER 4: REDE DE SEGURANÇA LOCAL
+        # ==========================================
         - id: freellmapi
-          base-url: ${FREELLMAPI_URL:http://localhost:3001/v1}
+          base-url: ${FREELLMAPI_URL:http://127.0.0.1:3001/v1}
           api-key: ${FREELLMAPI_API_KEY:}
           model: ${FREELLMAPI_MODEL:auto}
-          ttft: 20s
+          ttft: 30s
           timeout: 90s
 
-    # Fallback local opcional. Para ativar, defina
-    # OLLAMA_CHAT_HABILITADO=true e execute:
-    # ollama pull llama3.1:8b
+    # Fallback local, só para desenvolvimento (Desativado).
     ollama-chat:
-      habilitado: ${OLLAMA_CHAT_HABILITADO:false}
+      habilitado: ${OLLAMA_CHAT_HABILITADO:true}
       url: ${OLLAMA_URL:http://localhost:11434}
-      model: ${OLLAMA_CHAT_MODEL:llama3.1:8b}
+      model: ${OLLAMA_CHAT_MODEL:qwen2.5:0.5b}
 
-    # Indexação de embeddings (roda 1× na subida da app).
-    # Cada runner só é criado se a flag correspondente for "true".
-    # Lembre de desligar depois que a tabela estiver cheia.
+    # Indexação de embeddings
     gemini-indexador:
-      habilitado: ${GEMINI_INDEXADOR_HABILITADO:false}
+      habilitado: ${GEMINI_INDEXADOR_HABILITADO:true}
 
     ollama-indexador:
-      habilitado: ${OLLAMA_INDEXADOR_HABILITADO:false}
+      habilitado: ${OLLAMA_INDEXADOR_HABILITADO:true}
 
     embedding:
       gemini-api-key: ${GEMINI_API_KEY:}
@@ -167,8 +273,6 @@ app:
       ollama-url: ${OLLAMA_URL:http://localhost:11434}
       ollama-model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
 
-    # O pgvector usa o mesmo DataSource de spring.datasource.*.
-    # Parâmetros otimizados para redução de tokens e economia de contexto.
     rag:
       top-k-semelhantes: ${RAG_TOP_K_SEMELHANTES:2}
       candidatos: ${RAG_CANDIDATOS:8}
@@ -176,9 +280,9 @@ app:
       min-score-ollama: ${RAG_MIN_SCORE_OLLAMA:0.70}
       status-bloqueados: ${RAG_STATUS_BLOQUEADOS:ERRADO,SUSPEITO}
       max-caracteres-por-fonte: ${RAG_MAX_CARACTERES_FONTE:1000}
-      ollama-habilitado: ${RAG_OLLAMA_HABILITADO:true}   # em produção: RAG_OLLAMA_HABILITADO=false
+      ollama-habilitado: ${RAG_OLLAMA_HABILITADO:true}
 
-# Supabase Storage para backup de PDFs
+# Supabase Storage
 supabase:
   url: ${SUPABASE_URL:}
   key: ${SUPABASE_KEY:}

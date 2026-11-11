@@ -7,10 +7,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Provedores de chat ({@code app.tutor.cascata}). A ordem da lista é a prioridade; sem api-key, é ignorado.
- * rpm/rpd/tpm/tpd são tetos locais (0 = sem limite local), aplicados antes de chamar o provedor.
- */
 @ConfigurationProperties("app.tutor.cascata")
 public record CascataProperties(List<Provedor> provedores) {
 
@@ -31,10 +27,16 @@ public record CascataProperties(List<Provedor> provedores) {
             @DefaultValue("0") int rpd,
             @DefaultValue("0") long tpm,
             @DefaultValue("0") long tpd,
-            @DefaultValue Map<String, String> headers
+            @DefaultValue Map<String, String> headers,
+            String pingUrl // [NOVO] Opcional: URL customizada para ping
     ) {
         public boolean habilitado() {
             return apiKey != null && !apiKey.isBlank();
+        }
+
+        // Retorna a URL de ping customizada ou a padrão (/models)
+        public String urlParaPing() {
+            return (pingUrl != null && !pingUrl.isBlank()) ? pingUrl : baseUrl() + "/models";
         }
     }
 }
