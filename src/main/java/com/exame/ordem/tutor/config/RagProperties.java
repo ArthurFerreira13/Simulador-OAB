@@ -1,37 +1,58 @@
 package com.exame.ordem.tutor.config;
 
 import com.exame.ordem.tutor.internal.ProvedorEmbedding;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
-/**
- * Parâmetros da busca RAG ({@code app.tutor.rag}). O pgvector usa o mesmo {@code DataSource} do Spring.
- *
- * @param topKSemelhantes máximo de comentários de outras questões enviados ao LLM
- * @param candidatos quantidade de vizinhos solicitada ao pgvector antes do filtro
- * @param minScoreGemini score mínimo para o provedor Gemini
- * @param minScoreOllama score mínimo para o provedor Ollama
- * @param ollamaHabilitado se o Ollama entra na busca RAG (desligue em produção)
- * @param statusBloqueados status que nunca devem entrar no prompt
- * @param maxCaracteresPorFonte limite de caracteres por comentário
- */
+@Validated
 @ConfigurationProperties("app.tutor.rag")
 public record RagProperties(
-        @DefaultValue("3") int topKSemelhantes,
-        @DefaultValue("12") int candidatos,
-        @DefaultValue("0.75") double minScoreGemini,
-        @DefaultValue("0.70") double minScoreOllama,
+        @Positive @DefaultValue("3") int topKSemelhantes,
+        @Positive @DefaultValue("12") int candidatos,
+        @DecimalMin("0.0") @DecimalMax("1.0") @DefaultValue("0.75") double minScoreGemini,
+        @DecimalMin("0.0") @DecimalMax("1.0") @DefaultValue("0.70") double minScoreOllama,
+        @DecimalMin("0.0") @DecimalMax("1.0") @DefaultValue("0.70") double minScoreFreellm,
         @DefaultValue("true") boolean ollamaHabilitado,
         @DefaultValue({"ERRADO", "SUSPEITO"}) List<String> statusBloqueados,
-        @DefaultValue("1200") int maxCaracteresPorFonte
+        @Positive @DefaultValue("1200") int maxCaracteresPorFonte
 ) {
+
+    public RagProperties {
+        statusBloqueados = statusBloqueados == null
+                ? List.of()
+                : statusBloqueados.stream()
+                .map(s -> s.trim().toUpperCase(Locale.ROOT))
+                .distinct()
+                .toList();
+    }
+
+    @AssertTrue(message = "app.tutor.rag.candidatos deve ser maior ou igual a topKSemelhantes")
+    public boolean isCandidatosConsistente() {
+        return candidatos >= topKSemelhantes;
+    }
 
     public double minScore(ProvedorEmbedding provedor) {
         return switch (provedor) {
             case GEMINI -> minScoreGemini;
             case OLLAMA -> minScoreOllama;
+            case FREELLM -> minScoreFreellm;
         };
+    }
+
+    public Set<String> statusBloqueadosSet() {
+        return Set.copyOf(statusBloqueados);
+    }
+
+    public boolean isStatusBloqueado(String status) {
+        return status != null && statusBloqueados.contains(status.trim().toUpperCase(Locale.ROOT));
     }
 }

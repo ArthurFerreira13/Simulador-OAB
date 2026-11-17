@@ -12,7 +12,8 @@ package com.exame.ordem.tutor.internal;
 public enum ProvedorEmbedding {
 
     GEMINI("comentario_embedding_gemini", "[Gemini]"),
-    OLLAMA("comentario_embedding_ollama", "[Ollama]");
+    OLLAMA("comentario_embedding_ollama", "[Ollama]"),
+    FREELLM("comentario_embedding_freellm", "[FreeLLM]"); // [NOVO]
 
     private final String tabela;
     private final String prefixoLog;

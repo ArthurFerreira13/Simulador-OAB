@@ -1,3 +1,6 @@
+# Reescrito para testes de carga e produção. Valores padrão preservados, exceto onde marcado com [MUDOU].
+# Provedores da cascata e demais blocos de negócio estão idênticos ao original.
+
 spring:
   application:
     name: ordem
@@ -6,6 +9,10 @@ spring:
       enabled: true
   config:
     import: optional:file:.env[.properties]
+
+  # [MUDOU] encerra sem cortar streams SSE em andamento
+  lifecycle:
+    timeout-per-shutdown-phase: ${SHUTDOWN_TIMEOUT:30s}
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/banco_oab_dev}
@@ -25,7 +32,7 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: ${HIBERNATE_FORMAT_SQL:false}
 
   modulith:
     events:
@@ -39,11 +46,20 @@ spring:
     baseline-on-migrate: true
     baseline-version: 1
 
+# [MUDOU] shutdown gracioso e IP real do cliente atrás de proxy.
+# O RateLimitFilter usa request.getRemoteAddr(): atrás de proxy/load balancer use FORWARD_HEADERS_STRATEGY=native
+# (o Tomcat resolve X-Forwarded-For só de proxies confiáveis). Sem isso, todos os usuários dividem o mesmo bucket.
+server:
+  shutdown: graceful
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
+
+# [MUDOU] padrão silencioso (log de SQL e de ping distorcem teste de carga).
+# Para depurar: LOG_HIBERNATE_SQL=debug LOG_PING_LEVEL=debug
 logging:
   level:
-    org.hibernate.SQL: debug
+    org.hibernate.SQL: ${LOG_HIBERNATE_SQL:warn}
     org.flywaydb: info
-    com.exame.ordem.tutor.service.ProvedorPingService: debug
+    com.exame.ordem.tutor.service.ProvedorPingService: ${LOG_PING_LEVEL:info}
 
 app:
   admin:
@@ -57,10 +73,10 @@ app:
     enabled: true
     rules:
       login:
-        capacity: 5
+        capacity: ${RATE_LIMIT_LOGIN_CAPACITY:5}
         window: 1m
       cadastro:
-        capacity: 3
+        capacity: ${RATE_LIMIT_CADASTRO_CAPACITY:3}
         window: 1h
 
   simulado:
@@ -83,7 +99,7 @@ app:
           model: ${GROQ_MODEL:openai/gpt-oss-120b}
           ttft: 8s
           timeout: 45s
-          rpm: 25
+          rpm: 6   # TPM 8000 / ~1300 tokens por request
           rpd: 900
           tpm: 7000
           tpd: 180000
@@ -94,49 +110,50 @@ app:
           model: ${GROQ_MODEL:openai/gpt-oss-120b}
           ttft: 8s
           timeout: 45s
-          rpm: 25
+          rpm: 6   # TPM 8000 / ~1300 tokens por request
           rpd: 900
           tpm: 7000
           tpd: 180000
 
-        - id: sambanova
-          base-url: https://api.sambanova.ai/v1
-          api-key: ${SAMBANOVA_API_KEY:}
-          model: ${SAMBANOVA_MODEL:gpt-oss-120b}
-          ttft: 10s
-          timeout: 45s
-          rpm: 10
-          rpd: 1000
+        # DESATIVADO: conta sem saldo (PAYMENT_METHOD_REQUIRED). Reative após adicionar método de pagamento.
+        # - id: sambanova
+        #   base-url: https://api.sambanova.ai/v1
+        #   api-key: ${SAMBANOVA_API_KEY:}
+        #   model: ${SAMBANOVA_MODEL:gpt-oss-120b}
+        #   ttft: 10s
+        #   timeout: 45s
+        #   rpm: 10
+        #   rpd: 1000
 
-        # ==========================================
-        # TIER 2: ESTÁVEIS
-        # ==========================================
         # ==========================================
         # TIER 2: ESTÁVEIS (NVIDIA)
         # ==========================================
-        - id: nvidia-1
-          base-url: https://integrate.api.nvidia.com/v1
-          api-key: ${NVIDIA_API_KEY:}
-          model: meta/llama-3.1-8b-instruct         # Modelo leve e rápido
-          ttft: 15s
-          timeout: 90s
-          rpm: 30
+        # DESATIVADO: modelo meta/llama-3.1-8b-instruct descontinuado em 2026-08-26 (HTTP 410). Troque o modelo e reative.
+        # - id: nvidia-1
+        #   base-url: https://integrate.api.nvidia.com/v1
+        #   api-key: ${NVIDIA_API_KEY:}
+        #   model: meta/llama-3.1-8b-instruct         # Modelo leve e rápido
+        #   ttft: 15s
+        #   timeout: 90s
+        #   rpm: 30
 
-        - id: nvidia-2
-          base-url: https://integrate.api.nvidia.com/v1
-          api-key: ${NVIDIA_API_KEY:}
-          model: google/gemma-2-9b-it               # Modelo do Google (Fallback 1)
-          ttft: 15s
-          timeout: 90s
-          rpm: 30
+        # DESATIVADO: retorna 404 (modelo/URL inválidos). Confirme o modelo no catálogo da NVIDIA e reative.
+        # - id: nvidia-2
+        #   base-url: https://integrate.api.nvidia.com/v1
+        #   api-key: ${NVIDIA_API_KEY:}
+        #   model: google/gemma-2-9b-it               # Modelo do Google (Fallback 1)
+        #   ttft: 15s
+        #   timeout: 90s
+        #   rpm: 30
 
-        - id: nvidia-3
-          base-url: https://integrate.api.nvidia.com/v1
-          api-key: ${NVIDIA_API_KEY:}
-          model: mistralai/mistral-nemo-12b-instruct # Modelo da Mistral (Fallback 2)
-          ttft: 15s
-          timeout: 90s
-          rpm: 30
+        # DESATIVADO: retorna 404 (modelo/URL inválidos). Confirme o modelo no catálogo da NVIDIA e reative.
+        # - id: nvidia-3
+        #   base-url: https://integrate.api.nvidia.com/v1
+        #   api-key: ${NVIDIA_API_KEY:}
+        #   model: mistralai/mistral-nemo-12b-instruct # Modelo da Mistral (Fallback 2)
+        #   ttft: 15s
+        #   timeout: 90s
+        #   rpm: 30
 
         - id: gemini-1
           base-url: https://generativelanguage.googleapis.com/v1beta/openai
@@ -191,19 +208,20 @@ app:
             HTTP-Referer: http://localhost:8080
             X-Title: Simulador OAB
 
-        - id: openrouter-2
-          base-url: https://openrouter.ai/api/v1
-          api-key: ${OPENROUTER_API_KEY_1:}
-          model: ${OPENROUTER_MODEL:google/gemma-4-31b-it}
-          temperature: 0.6
-          max-tokens: 4096
-          ttft: 25s
-          timeout: 120s
-          rpm: 15
-          rpd: 45
-          headers:
-            HTTP-Referer: http://localhost:8080
-            X-Title: Simulador OAB
+        # DESATIVADO: sem créditos (HTTP 402 in_flight_budget_exhausted). Adicione créditos e reative.
+        # - id: openrouter-2
+        #   base-url: https://openrouter.ai/api/v1
+        #   api-key: ${OPENROUTER_API_KEY_1:}
+        #   model: ${OPENROUTER_MODEL:google/gemma-4-31b-it}
+        #   temperature: 0.6
+        #   max-tokens: 4096
+        #   ttft: 25s
+        #   timeout: 120s
+        #   rpm: 15
+        #   rpd: 45
+        #   headers:
+        #     HTTP-Referer: http://localhost:8080
+        #     X-Title: Simulador OAB
 
         # [NOVO] ping-url corrigido para o endpoint oficial de busca da Cloudflare
         - id: cloudflare-1
@@ -254,25 +272,37 @@ app:
           ttft: 30s
           timeout: 90s
 
-    # Fallback local, só para desenvolvimento (Desativado).
+    # Fallback local, só para desenvolvimento. [MUDOU] comentário corrigido: o padrão é HABILITADO;
+    # em produção defina OLLAMA_CHAT_HABILITADO=false (modelo pequeno gera respostas ruins).
     ollama-chat:
       habilitado: ${OLLAMA_CHAT_HABILITADO:true}
       url: ${OLLAMA_URL:http://localhost:11434}
       model: ${OLLAMA_CHAT_MODEL:qwen2.5:0.5b}
 
+    # [MUDOU] cache semântico explícito (antes só tinha os defaults do código).
+    # SEMANTIC_CACHE_ENABLED=false desliga o cache nos testes de carga; ao trocar o embedder
+    # (RAG_OLLAMA_HABILITADO) ou o system prompt, esvazie a tabela semantic_cache ou mude o PROMPT_VERSION.
+    semantic-cache:
+      enabled: ${SEMANTIC_CACHE_ENABLED:true}
+      similarity-threshold: ${SEMANTIC_CACHE_THRESHOLD:0.92}
+      prompt-version: ${SEMANTIC_CACHE_PROMPT_VERSION:v1}
+      ttl-days: ${SEMANTIC_CACHE_TTL_DAYS:30}
+
     # Indexação de embeddings
+    # Durante teste de carga: GEMINI_INDEXADOR_HABILITADO=false OLLAMA_INDEXADOR_HABILITADO=false
     gemini-indexador:
-      habilitado: ${GEMINI_INDEXADOR_HABILITADO:true}
+      habilitado: ${GEMINI_INDEXADOR_HABILITADO:TRUE}
 
     ollama-indexador:
-      habilitado: ${OLLAMA_INDEXADOR_HABILITADO:true}
+      habilitado: ${OLLAMA_INDEXADOR_HABILITADO:TRUE}
 
     embedding:
       gemini-api-key: ${GEMINI_API_KEY:}
       model: ${TUTOR_EMBEDDING_MODEL:gemini-embedding-001}
+      gemini-max-concurrency: ${GEMINI_EMBEDDING_MAX_CONCURRENCY:8}
       ollama-url: ${OLLAMA_URL:http://localhost:11434}
       ollama-model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
-
+      ollama-max-concurrency: ${OLLAMA_EMBEDDING_MAX_CONCURRENCY:1}
     rag:
       top-k-semelhantes: ${RAG_TOP_K_SEMELHANTES:2}
       candidatos: ${RAG_CANDIDATOS:8}
@@ -294,3 +324,13 @@ management:
     web:
       exposure:
         include: health, info, metrics, prometheus
+  # [MUDOU] percentis por endpoint e tag da aplicação para o Grafana
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true

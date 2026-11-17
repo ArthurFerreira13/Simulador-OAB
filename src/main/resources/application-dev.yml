@@ -21,6 +21,20 @@ logging:
     org.hibernate.SQL: info
 
 app:
+  # Rate limit de dev: aumentado para não bloquear setup do k6.
+  # Em prod (application-prod.yml ou application.yaml), manter 5/min
+  # para login — a proteção contra brute-force continua valendo.
+  rate-limit:
+    rules:
+      login:
+        capacity: 200     # antes: 5 (herdado do application.yaml)
+        window: 1m
+      cadastro:
+        capacity: 50      # antes: 3
+        window: 1h
+
   tutor:
     freellmapi:
       autostart: true
+    semantic-cache:
+      enabled: false

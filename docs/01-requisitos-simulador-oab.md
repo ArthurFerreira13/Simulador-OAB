@@ -296,7 +296,7 @@ Banco de questões; simulados cronometrados; tutor de IA; legislação; planejam
 | Simulado (completo ou personalizado) | Sem limite diário | 1 por dia | Sem limite diário |
 | Resultado e desempenho por disciplina | Sim | Sim | Sim |
 | Questões avulsas (RF02) | Sim | Não | Sim |
-| Tutor de IA (RF04) | Sim, com cotas (D08) | Não | Sim, com cotas (D08) |
+| Tutor de IA (RF04) | Não | Não | Sim, com cotas (D08) |
 | Plano de estudos (RF06) | Sim | Não | Sim |
 | Ranking (RF07) | Sim | Não | Sim |
 | Anotações (RF08) | Sim | Não | Sim |
@@ -372,7 +372,7 @@ Papel único `ADMIN` (D24). O administrador vê contagens e estado, nunca conte�
 | **RN07** | Ranking: elegibilidade a partir de um mínimo de questões respondidas (referência: 20); desempate por número de acertos e, em seguida, taxa de acerto; exibição por apelido ou iniciais por padrão; pontuação de jogos não entra. |
 | **RN08** | Um dia conta para o streak quando há ao menos uma questão respondida *(proposto)*. |
 | **RN09** | Toda resposta do tutor exibe o aviso de limitação e, quando houver, as fontes utilizadas; resposta sem fonte recuperada deve ser sinalizada como tal. |
-| **RN10** | Limites de uso do tutor no trial e no plano pago: **pendente (D08)**. O plano gratuito não inclui o tutor (RF12.9). |
+| **RN10** | Somente usuários PAGO têm acesso ao tutor e possuem cota de mensagens e tokens. Os valores dos limites permanecem **pendentes (D08)**. Usuários TRIAL e GRATUITO não têm acesso ao tutor nem cota de tokens. |
 | **RN11** | A garantia de reembolso é política própria do produto, comunicada de forma igual para qualquer método de pagamento. |
 | **RN12** | "Reiniciar estatísticas" zera progresso e desempenho, preservando conta, assinatura, anotações e favoritos. "Excluir conta" remove dados de forma permanente. |
 | **RN13** | Trial reverso: 7 dias corridos de acesso completo a partir da criação da conta, sem cartão (D11). Sem plano pago ao fim do prazo, o usuário passa ao plano gratuito. |

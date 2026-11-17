@@ -10,7 +10,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/** Operações de persistência da cota do tutor: cada chamada tem sua própria transação curta. */
 @Service
 public class CotaTutorTransacionalService {
 
@@ -24,18 +23,21 @@ public class CotaTutorTransacionalService {
 
     @Transactional
     public void reservar(Long usuarioId, LocalDate dia, int limiteMensagens, long limiteTokens) {
-        LocalDateTime agora = LocalDateTime.now(clock);
-        usoRepository.garantirLinha(usuarioId, dia, agora);
+        if (limiteMensagens <= 0 || limiteTokens <= 0) {
+            throw new RegraDeNegocioException("Acesso ao tutor não disponível.");
+        }
 
-        int reservou = usoRepository.reservar(usuarioId, dia, limiteMensagens, limiteTokens, agora);
+        LocalDateTime agora = LocalDateTime.now(clock);
+        int reservou = usoRepository.reservarAtomico(
+                usuarioId, dia, limiteMensagens, limiteTokens, agora);
+
         if (reservou == 0) {
-            UsoTutorDia uso = usoRepository.findByUsuarioIdAndData(usuarioId, dia).orElseThrow();
-            if (uso.getContador() >= limiteMensagens) {
-                throw new RegraDeNegocioException(
-                        "Limite diário de mensagens do tutor atingido (" + limiteMensagens + ").");
-            }
-            throw new RegraDeNegocioException(
-                    "Limite diário de tokens do tutor atingido (" + limiteTokens + ").");
+            String motivo = usoRepository.findByUsuarioIdAndData(usuarioId, dia)
+                    .map(uso -> uso.getContador() >= limiteMensagens
+                            ? "Limite diário de mensagens do tutor atingido (" + limiteMensagens + ")."
+                            : "Limite diário de tokens do tutor atingido (" + limiteTokens + ").")
+                    .orElse("Limite diário de uso do tutor atingido.");
+            throw new RegraDeNegocioException(motivo);
         }
     }
 
@@ -44,9 +46,25 @@ public class CotaTutorTransacionalService {
         return usoRepository.findByUsuarioIdAndData(usuarioId, dia).orElse(null);
     }
 
+    @Transactional(readOnly = true)
+    public int mensagensUsadas(Long usuarioId, LocalDate dia) {
+        return usoRepository.findByUsuarioIdAndData(usuarioId, dia)
+                .map(UsoTutorDia::getContador)
+                .orElse(0);
+    }
+
+    @Transactional(readOnly = true)
+    public long tokensUsados(Long usuarioId, LocalDate dia) {
+        return usoRepository.findByUsuarioIdAndData(usuarioId, dia)
+                .map(UsoTutorDia::getTokens)
+                .orElse(0L);
+    }
+
     @Transactional
     public void somarTokens(Long usuarioId, LocalDate dia, int tokens, LocalDateTime atualizadoEm) {
-        usoRepository.somarTokens(usuarioId, dia, tokens, atualizadoEm);
+        if (tokens > 0) {
+            usoRepository.somarTokens(usuarioId, dia, tokens, atualizadoEm);
+        }
     }
 
     @Transactional

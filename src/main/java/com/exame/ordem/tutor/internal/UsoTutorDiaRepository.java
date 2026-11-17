@@ -13,53 +13,58 @@ import java.util.Optional;
 /**
  * Repositório do uso diário do tutor.
  *
- * <p>A cota é reservada de forma atômica no banco ({@link #reservar}) antes de chamar o LLM.
- * Antes, o contador só subia quando a resposta terminava, então várias requisições paralelas
- * passavam do limite. Os métodos de escrita têm {@code @Transactional} próprio porque o
- * fechamento (tokens/estorno) roda na thread do streaming, fora da transação do serviço.
+ * <p><b>Performance (row lock):</b> {@link #reservarAtomico} combina INSERT + UPDATE
+ * em um único {@code INSERT ... ON CONFLICT DO UPDATE}. Isso é atômico no PostgreSQL
+ * (docs: "ON CONFLICT DO UPDATE guarantees an atomic INSERT or UPDATE outcome") e
+ * elimina a janela em que duas requisições paralelas criavam/atualizavam a linha em
+ * duas operações distintas — que é o que gerava o {@code Lock:transactionid} e a fila
+ * de 37s observados no teste de 100 requests do mesmo usuário.
+ *
+ * <p>O {@code WHERE} dentro do {@code DO UPDATE} é o guardião dos limites de
+ * mensagens e tokens já contabilizados. Se algum limite falhar,
+ * nenhuma linha é atualizada e o rowcount volta 0. A aplicação então faz um
+ * SELECT (só no caminho de falha) para descobrir qual limite estourou.
+ *
+ * <p><b>Nota sobre @Transactional nos métodos:</b> é defesa em profundidade.
+ * Normalmente o caller ({@link com.exame.ordem.tutor.service.CotaTutorTransacionalService})
+ * já abre transação, e a propagação REQUIRED apenas junta. Mas se algum código chamar
+ * direto sem service, ainda funciona.
  */
 public interface UsoTutorDiaRepository extends JpaRepository<UsoTutorDia, Long> {
 
     Optional<UsoTutorDia> findByUsuarioIdAndData(Long usuarioId, LocalDate data);
 
-    /** Cria a linha do dia se ainda não existir (seguro sob concorrência: ON CONFLICT DO NOTHING). */
-    @Transactional
-    @Modifying
-    @Query(value = """
-            INSERT INTO uso_tutor_dia (usuario_id, data, contador, tokens, criado_em, atualizado_em)
-            VALUES (:usuarioId, :data, 0, 0, :agora, :agora)
-            ON CONFLICT (usuario_id, data) DO NOTHING
-            """, nativeQuery = true)
-    void garantirLinha(@Param("usuarioId") Long usuarioId,
-                       @Param("data") LocalDate data,
-                       @Param("agora") LocalDateTime agora);
-
     /**
-     * Reserva uma mensagem se, e só se, os dois limites ainda não foram atingidos.
+     * Conta uma mensagem se os limites ainda permitirem, criando a linha do dia
+     * se necessário.
      *
-     * @return 1 se reservou; 0 se o limite de mensagens ou de tokens do dia já foi atingido
+     * @return 1 se contabilizou; 0 se os limites de mensagens ou tokens forem atingidos
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("""
-            update UsoTutorDia u
-               set u.contador = u.contador + 1, u.atualizadoEm = :agora
-             where u.usuarioId = :usuarioId and u.data = :data
-               and u.contador < :limiteMensagens and u.tokens < :limiteTokens
-            """)
-    int reservar(@Param("usuarioId") Long usuarioId,
-                 @Param("data") LocalDate data,
-                 @Param("limiteMensagens") int limiteMensagens,
-                 @Param("limiteTokens") long limiteTokens,
-                 @Param("agora") LocalDateTime agora);
+    @Query(value = """
+            INSERT INTO uso_tutor_dia (usuario_id, data, contador, tokens, criado_em, atualizado_em)
+            VALUES (:usuarioId, :data, 1, 0, :agora, :agora)
+            ON CONFLICT (usuario_id, data) DO UPDATE
+               SET contador = uso_tutor_dia.contador + 1,
+                   atualizado_em = :agora
+             WHERE uso_tutor_dia.contador < :limiteMensagens
+               AND uso_tutor_dia.tokens < :limiteTokens
+            """, nativeQuery = true)
+    int reservarAtomico(@Param("usuarioId") Long usuarioId,
+                        @Param("data") LocalDate data,
+                        @Param("limiteMensagens") int limiteMensagens,
+                        @Param("limiteTokens") long limiteTokens,
+                        @Param("agora") LocalDateTime agora);
 
-    /** Devolve a reserva quando nenhum token chegou a ser entregue (falha em todos os provedores). */
+    /** Devolve a mensagem quando a geração falha antes do primeiro token. */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update UsoTutorDia u
                set u.contador = u.contador - 1, u.atualizadoEm = :agora
-             where u.usuarioId = :usuarioId and u.data = :data and u.contador > 0
+             where u.usuarioId = :usuarioId and u.data = :data
+               and u.contador > 0
             """)
     int estornar(@Param("usuarioId") Long usuarioId,
                  @Param("data") LocalDate data,

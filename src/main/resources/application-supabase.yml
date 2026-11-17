@@ -1,0 +1,26 @@
+# Profile: supabase
+# Uso: rodar a app apontando para o Supabase (backup, inspeção, MCP)
+#
+#   ./mvnw spring-boot:run -Dspring-boot.run.profiles=supabase
+#
+# OU no IntelliJ: SPRING_PROFILES_ACTIVE=supabase
+#
+# ⚠️ Atenção: o RAG (pgvector) NÃO funciona bem pelo pooler do Supabase.
+# Use este profile apenas para inspeção/backup, não para o tutor em produção.
+
+spring:
+  datasource:
+    url: jdbc:postgresql://aws-0-sa-east-1.pooler.supabase.com:5432/postgres?user=postgres.krslqptqzyscvamnumyb&password=%25%25Senha123%40%25%252025130610&sslmode=require
+
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: false
+
+logging:
+  level:
+    org.hibernate.SQL: info

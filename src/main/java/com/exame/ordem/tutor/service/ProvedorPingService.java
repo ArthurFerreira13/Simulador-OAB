@@ -1,118 +1,126 @@
 package com.exame.ordem.tutor.service;
 
 import com.exame.ordem.tutor.config.CascataProperties;
+import com.exame.ordem.tutor.config.TutorProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 
+/**
+ * Health-check periódico dos provedores de LLM <b>locais</b> (freellmapi, ollama).
+ *
+ * <p><b>Provedores remotos não são pingados.</b> Cada GET em {@code /models} conta como
+ * chamada na cota do provedor (o trial do Cohere, por exemplo, tem 1000 chamadas/mês e
+ * um ping a cada 30 s por chave o esgotava em poucas horas). A saúde dos remotos vem do
+ * tráfego real: circuit breaker + cooldown aplicado pelo {@link LlmRouter} nos erros.
+ *
+ * <p><b>Sanitização de logs:</b> exceções de provedores podem conter
+ * fragmentos de chave em {@code e.getMessage()} (ex.: mensagens de erro
+ * que ecoam o {@code Authorization} recebido). {@link #sanitizarErro}
+ * redige padrões conhecidos ({@code sk-...}, {@code AIza...},
+ * {@code Bearer ...}, {@code api_key=...}) e trunca a mensagem antes de
+ * logar, evitando persistir segredos em arquivo de log.
+ */
 @Service
 public class ProvedorPingService {
 
     private static final Logger log = LoggerFactory.getLogger(ProvedorPingService.class);
+    private static final int SOCKET_TIMEOUT_MS = 1_000;
 
     private final List<CascataProperties.Provedor> provedores;
     private final ProvedorSaude provedorSaude;
-    private final boolean ollamaHabilitado;
-    private final String ollamaUrl;
+    private final TutorProperties.OllamaChat ollamaCfg;
 
     public ProvedorPingService(
-            CascataProperties props,
-            ProvedorSaude provedorSaude,
-            @Value("${app.tutor.ollama-chat.habilitado:false}") boolean ollamaHabilitado,
-            @Value("${app.tutor.ollama-chat.url:http://localhost:11434}") String ollamaUrl) {
-        this.provedores = props.provedores();
+            CascataProperties cascataProps,
+            TutorProperties tutorProps,
+            ProvedorSaude provedorSaude) {
+        this.provedores = cascataProps.provedores();
         this.provedorSaude = provedorSaude;
-        this.ollamaHabilitado = ollamaHabilitado;
-        this.ollamaUrl = ollamaUrl;
+        this.ollamaCfg = tutorProps.ollamaChat();
     }
 
-    /**
-     * [NOVO] Dispara o ping imediatamente quando a aplicação termina de subir.
-     * Não espera os 30 segundos do @Scheduled.
-     */
     @EventListener(ApplicationReadyEvent.class)
     public void pingarNoBoot() {
-        log.info("🚀 [PING] Aplicação pronta. Disparando ping inicial em background...");
-        // Roda em uma thread separada para não bloquear a subida da aplicação
-        CompletableFuture.runAsync(this::pingarTodos);
+        log.info("[PING] Aplicação pronta. Disparando verificação inicial de provedores...");
+        Thread.ofVirtual().name("ping-boot").start(this::pingarTodos);
     }
 
-    /**
-     * [AJUSTADO] Removeu o initialDelay para garantir que rode sempre no segundo 0.
-     * Roda a cada 30 segundos para manter as latências atualizadas.
-     */
-    @Scheduled(fixedRate = 30_000, initialDelay = 0)
+    @Scheduled(fixedDelay = 10_000)
     public void pingarTodos() {
-        var futures = provedores.stream()
-                .filter(CascataProperties.Provedor::habilitado)
-                .map(p -> CompletableFuture.runAsync(() -> pingar(p)))
-                .toList();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            provedores.stream()
+                    .filter(CascataProperties.Provedor::habilitado)
+                    .filter(p -> isLocalhost(p.urlParaPing()))
+                    .filter(p -> provedorSaude.devePingar(p.id()))
+                    .forEach(p -> executor.submit(() -> pingar(p)));
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-        if (ollamaHabilitado) {
-            pingarOllama();
+            if (ollamaCfg.habilitado() && provedorSaude.devePingar("ollama")) {
+                executor.submit(this::pingarOllama);
+            }
         }
     }
 
     private void pingar(CascataProperties.Provedor p) {
         long inicio = System.currentTimeMillis();
         try {
-            String url = p.urlParaPing();
-
-            if (url.contains("localhost") || url.contains("127.0.0.1")) {
-                URI uri = URI.create(url);
-                try (Socket socket = new Socket()) {
-                    socket.connect(new InetSocketAddress(uri.getHost(), uri.getPort()), 1000);
-                }
-            } else {
-                int timeoutMs = 3000;
-                var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-                factory.setConnectTimeout(timeoutMs);
-                factory.setReadTimeout(timeoutMs);
-
-                var restClient = RestClient.builder().requestFactory(factory).build();
-                var spec = restClient.get().uri(url);
-
-                if (p.headers().containsKey("Authorization")) {
-                    spec.header("Authorization", p.headers().get("Authorization"));
-                } else {
-                    spec.header("Authorization", "Bearer " + p.apiKey());
-                }
-                spec.retrieve().toBodilessEntity();
-            }
-
-            long latencia = System.currentTimeMillis() - inicio;
-            provedorSaude.registrarSucessoPing(p.id(), latencia);
+            pingarSocket(p.urlParaPing());
+            provedorSaude.registrarSucessoPing(p.id(), System.currentTimeMillis() - inicio);
         } catch (Exception e) {
             provedorSaude.registrarFalhaPing(p.id());
-            log.debug("[PING] {} falhou: {}", p.id(), e.getMessage());
+            log.debug("[PING] {} falhou: {}", p.id(), sanitizarErro(e));
         }
     }
 
     private void pingarOllama() {
         long inicio = System.currentTimeMillis();
         try {
-            URI uri = URI.create(ollamaUrl);
-            try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(uri.getHost(), uri.getPort()), 1000);
-            }
-            long latencia = System.currentTimeMillis() - inicio;
-            provedorSaude.registrarSucessoPing("ollama", latencia);
+            pingarSocket(ollamaCfg.url());
+            provedorSaude.registrarSucessoPing("ollama", System.currentTimeMillis() - inicio);
         } catch (Exception e) {
             provedorSaude.registrarFalhaPing("ollama");
-            log.debug("[PING] ollama falhou: {}", e.getMessage());
+            log.debug("[PING] ollama falhou: {}", sanitizarErro(e));
         }
+    }
+
+    private static boolean isLocalhost(String url) {
+        return url.contains("localhost") || url.contains("127.0.0.1");
+    }
+
+    private static void pingarSocket(String url) throws Exception {
+        URI uri = URI.create(url);
+        int porta = uri.getPort() > 0 ? uri.getPort() : 80;
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(uri.getHost(), porta), SOCKET_TIMEOUT_MS);
+        }
+    }
+
+    /**
+     * Converte uma exceção em mensagem segura para log: classe + mensagem
+     * com padrões de chave redigidos, truncada a 200 chars. Nunca lança.
+     */
+    static String sanitizarErro(Throwable e) {
+        if (e == null) return "erro desconhecido";
+        String mensagem = e.getMessage();
+        if (mensagem == null) return e.getClass().getSimpleName();
+        if (mensagem.length() > 200) {
+            mensagem = mensagem.substring(0, 200) + "…";
+        }
+        mensagem = mensagem
+                .replaceAll("sk-[A-Za-z0-9_-]{10,}", "sk-***")
+                .replaceAll("AIza[A-Za-z0-9_-]{20,}", "AIza***")
+                .replaceAll("(?i)Bearer\\s+\\S+", "Bearer ***")
+                .replaceAll("(?i)api[_-]?key=[^&\\s]+", "api_key=***")
+                .replaceAll("(?i)token=[^&\\s]+", "token=***");
+        return e.getClass().getSimpleName() + ": " + mensagem;
     }
 }

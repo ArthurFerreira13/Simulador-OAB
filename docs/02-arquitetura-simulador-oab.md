@@ -144,7 +144,7 @@ Regra de projeto: preferir resolver na camada de serviço a adicionar complexida
 - **Base de conhecimento:** pgvector com embeddings de comentários de questões (MVP 2, dependente de D04) e, a partir do MVP 5, de artigos de lei; no MVP 2 respostas sem fonte são sinalizadas e o aviso é reforçado (RN09, R02); pipeline de ingestão de legislação reaproveita o padrão de parsing usado nas provas.
 - **Qualidade:** resposta ancorada em trechos recuperados; sem trecho relevante, a resposta é sinalizada como sem fonte (RN09); aviso permanente de limitação (RF04.6).
 - **Rastreabilidade:** a resposta guarda as fontes usadas e linka o artigo (RF04.4).
-- **Custo e abuso:** cotas por usuário/plano, *rate limiting* e métrica de tokens por usuário (RNF13).
+- **Custo e abuso:** cotas por usuário PAGO, *rate limiting* e métrica de tokens por usuário (RNF13); TRIAL e GRATUITO não acessam o tutor.
 - **Resiliência:** *timeout*, *circuit breaker* e mensagem de contingência (RNF05); falha do tutor não afeta simulados.
 - **Entrega:** *streaming* por SSE, com cancelamento de geração.
 

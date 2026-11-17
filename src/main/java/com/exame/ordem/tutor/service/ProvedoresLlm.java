@@ -2,44 +2,55 @@ package com.exame.ordem.tutor.service;
 
 import com.exame.ordem.tutor.LlmProvider;
 import com.exame.ordem.tutor.config.CascataProperties;
+import com.exame.ordem.tutor.config.TutorProperties;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** Monta a lista de provedores na ordem do yaml; o Ollama (se ligado) entra por último. */
 @Component
 public class ProvedoresLlm {
 
     private static final Logger log = LoggerFactory.getLogger(ProvedoresLlm.class);
+    private final List<LlmProvider> provedores;
 
-    private final List<LlmProvider> ordenados;
+    ProvedoresLlm(CascataProperties props,
+                  TutorProperties tutorProperties,
+                  ObjectProvider<OllamaLlmProvider> ollamaProvider,
+                  ObjectProvider<FreeLlmApiLlmProvider> freeLlmProvider) {
+        List<LlmProvider> configurados = new ArrayList<>(props.provedores().stream()
+                .filter(CascataProperties.Provedor::habilitado)
+                .<LlmProvider>map(OpenAiCompatibleLlmProvider::new)
+                .toList());
 
-    ProvedoresLlm(CascataProperties props, ObjectProvider<OllamaLlmProvider> ollama) {
-        List<LlmProvider> lista = new ArrayList<>();
+        OllamaLlmProvider ollama = ollamaProvider.getIfAvailable();
+        if (ollama != null) {
+            configurados.add(ollama);
+        }
 
-        for (CascataProperties.Provedor cfg : props.provedores()) {
-            if (!cfg.habilitado()) {
-                log.info("Provedor LLM '{}' ignorado: sem api-key", cfg.id());
-                continue;
+        var freeLlmCfg = tutorProperties.freellmapi();
+        if (freeLlmCfg.autostart() || freeLlmCfg.habilitado()) {
+            FreeLlmApiLlmProvider freeLlm = freeLlmProvider.getIfAvailable();
+            if (freeLlm != null) {
+                configurados.add(freeLlm);
             }
-            lista.add(new OpenAiCompatibleLlmProvider(cfg));
-            log.info("Provedor LLM '{}' habilitado (modelo={}, ttft={}, timeout={})",
-                    cfg.id(), cfg.model(), cfg.ttft(), cfg.timeout());
         }
 
-        ollama.ifAvailable(lista::add);
-
-        if (lista.isEmpty()) {
-            log.error("Nenhum provedor LLM habilitado. Defina ao menos uma API key no .env.");
-        }
-        this.ordenados = List.copyOf(lista);
+        this.provedores = List.copyOf(configurados);
+        log.info("Provedores carregados: {}", provedores.stream().map(LlmProvider::name).toList());
     }
 
-    public List<LlmProvider> lista() {
-        return ordenados;
+    public List<LlmProvider> getProvedores() {
+        return provedores;
+    }
+
+    public int maxTokensResposta() {
+        return provedores.stream()
+                .mapToInt(LlmProvider::maxOutputTokens)
+                .max()
+                .orElse(1);
     }
 }

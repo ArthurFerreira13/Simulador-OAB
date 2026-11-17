@@ -198,6 +198,20 @@
 			<artifactId>langchain4j-jackson3</artifactId>
 		</dependency>
 
+		<!-- Resilience4j CircuitBreaker (Já deve estar aí) -->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-circuitbreaker</artifactId>
+			<version>2.3.0</version>
+		</dependency>
+
+		<!-- Adicione esta linha -->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-bulkhead</artifactId>
+			<version>2.3.0</version>
+		</dependency>
+
 		<!-- Web scraping -->
 		<dependency>
 			<groupId>org.jsoup</groupId>
@@ -211,16 +225,20 @@
 			<artifactId>bucket4j-core</artifactId>
 			<version>${bucket4j.version}</version>
 		</dependency>
-		<!-- Circuit breaker da cascata de LLM do tutor -->
-		<dependency>
-			<groupId>io.github.resilience4j</groupId>
-			<artifactId>resilience4j-circuitbreaker</artifactId>
-			<version>${resilience4j.version}</version>
-		</dependency>
 		<!-- Caffeine: cache com expiração para o rate limit (Bug 4) -->
 		<dependency>
 			<groupId>com.github.ben-manes.caffeine</groupId>
 			<artifactId>caffeine</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-cache</artifactId>
 		</dependency>
 
 		<!-- Runtime -->

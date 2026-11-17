@@ -75,7 +75,7 @@
 | D04 | Origem dos comentários | Curadoria, IA, ou combinação | RF02.3 | MVP 2 |
 | D05 | Gateway de pagamento | Mercado Pago, Stripe ou similar | RF12 | MVP 7 |
 | D06 | FKs físicas entre módulos | ADR-006 ou manter; decidir junto com *locations* do Flyway por módulo | Arquitetura | Antes do MVP 2 (o `tutor-ia` já cria tabelas com `usuarioId`) |
-| D08 | Limites do tutor no trial e no plano pago | Mensagens/dia e teto | RN10, RNF13 | MVP 2 |
+| D08 | Valores da cota de mensagens e tokens do tutor para usuários PAGO (TRIAL e GRATUITO sem acesso e sem cota) | Mensagens/dia e teto de tokens | RN10, RNF13 | MVP 2 |
 | D09 | Cadernos (tipo/cor) | Confirmar 1 caderno por exame | RF02.9, RF07 | MVP 4 |
 | D10 | Direitos de uso do conteúdo da banca | Assessoria jurídica | Viabilidade | MVP 7 |
 | D13 | Sessão abandonada conta no limite? | Conta, exceto sem resposta (proposta) | RN14 | MVP 1 |
@@ -115,7 +115,7 @@
 | R10 | Privacidade em ranking | M | M | Opt-in, apelido, minimização |
 | R11 | Comentários IA sem revisão | M | M | Sinalizar origem, revisar mais acessadas |
 | R12 | Abuso do trial | A | M | Verificação de e-mail (D14) |
-| R13 | Custo de LLM no trial | M | A | Cotas (D08), monitoramento |
+| R13 | Custo de LLM no uso por assinantes PAGO | M | A | Cotas (D08), monitoramento |
 | R14 | Comentários possivelmente trocados | M | M | Conteúdo imutável, reportar, correção auditada |
 | R15 *(proposto)* | Política da loja sobre cobrança dentro do app pode exigir faturamento da loja ou limitar o CTA de pagamento | M | M | Decidir D18 antes do Mobile 2; manter assinatura fora do app até lá |
 | R16 | Ação administrativa sem rastro | M | M | Auditoria obrigatória (RN16) |
@@ -134,7 +134,7 @@ A exclusão de conta remove os dados vinculados ao usuário em todos os módulos
 
 | Módulo | Previsto em | MVP alvo | Gatilho |
 |---|---|---|---|
-| `tutor-ia` | Doc 01 RF04 | MVP 2 | MVP 1 estável; D08 decidida |
+| `tutor-ia` | Doc 01 RF04 | MVP 2 | MVP 1 estável; valores de D08 definidos |
 | `legislacao` | Doc 01 RF05 | MVP 5 | Tutor em produção exigindo RAG |
 | `planejamento` | Doc 01 RF06 | MVP 6 | Retenção D7 indicando necessidade |
 | `ranking` | Doc 01 RF07 | MVP 4 | Base de respostas suficiente (RN07) |
@@ -178,7 +178,7 @@ A exclusão de conta remove os dados vinculados ao usuário em todos os módulos
 |---|---|---|
 | D04 | Pipeline de curadoria ou geração | Custo vs. qualidade medidos |
 | D05 | Integração de gateway | Comparativo de taxas |
-| D08 | Política de cotas do tutor | Custo por usuário no MVP 2 |
+| D08 | Valores de mensagens/dia e teto de tokens do tutor PAGO | Custo por usuário no MVP 2 |
 | D14 | Verificação de e-mail + hash | R12 confirmado em produção |
 | D16 | Estrutura KMP | Demanda iOS |
 | D17 | Tela de update forçado | Primeira mudança incompatível |

@@ -1,5 +1,10 @@
 package com.exame.ordem.tutor.internal;
 
+import com.exame.ordem.tutor.config.CacheConfig;
+import com.github.benmanes.caffeine.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.caffeine.CaffeineCache;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.jdbc.core.RowMapper;
@@ -7,30 +12,15 @@ import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
-/**
- * Leitura dos comentários ATUAIS das alternativas, com a triagem de qualidade aplicada.
- *
- * <p><b>Fronteira de módulo:</b> {@code alternativas} pertence ao módulo {@code questoes}. Esta
- * leitura direta por JDBC é a mesma exceção já adotada em {@link ComentariosPendentesRepository}
- * (layout ditado pelo pgvector, sem entidade). Dívida registrada: mover para uma porta do
- * {@code questoes} (ex.: {@code ComentariosQueryService}) quando o módulo expuser essa consulta.
- *
- * <p>Comentários com status bloqueado (padrão: ERRADO e SUSPEITO, da triagem V16) nunca saem
- * daqui. Status {@code null} ou NAO_VERIFICADO passam: enquanto a triagem não termina, bloquear
- * tudo que não é OK esvaziaria o RAG.
- */
 @Repository
 public class ComentariosRepository {
-
-    private final JdbcTemplate jdbc;
-
-    ComentariosRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     private static final RowMapper<FonteRag> MAPPER_QUESTAO = (rs, i) -> new FonteRag(
             rs.getLong("id"), rs.getInt("questao_id"), rs.getString("letra"),
@@ -40,7 +30,20 @@ public class ComentariosRepository {
             rs.getLong("id"), rs.getInt("questao_id"), rs.getString("letra"),
             rs.getString("comentario"), FonteRag.Origem.SEMELHANTE, null);
 
-    /** Comentários das alternativas da própria questão (consulta exata, sem embedding). */
+    private final JdbcTemplate jdbc;
+    private final Cache<Object, Object> cacheIndividual;
+
+    ComentariosRepository(JdbcTemplate jdbc, CacheManager cacheManager) {
+        this.jdbc = jdbc;
+        var springCache = cacheManager.getCache(CacheConfig.COMENTARIO_INDIVIDUAL);
+        this.cacheIndividual = (springCache instanceof CaffeineCache cc) ? cc.getNativeCache() : null;
+    }
+
+    @Cacheable(
+            cacheNames = CacheConfig.COMENTARIOS_QUESTAO,
+            key = "#questaoId + ':' + (#statusBloqueados != null ? T(java.util.Set).copyOf(#statusBloqueados) : 'NONE')",
+            unless = "#result == null"
+    )
     public List<FonteRag> daQuestao(int questaoId, Collection<String> statusBloqueados) {
         String sql = """
                 SELECT a.id, a.questao_id, a.letra, a.comentario
@@ -50,17 +53,52 @@ public class ComentariosRepository {
                    AND TRIM(a.comentario) <> ''
                 """ + clausulaStatus(statusBloqueados) + " ORDER BY a.letra";
 
-        List<Object> args = new ArrayList<>();
+        List<Object> args = new ArrayList<>(1 + (statusBloqueados != null ? statusBloqueados.size() : 0));
         args.add(questaoId);
-        args.addAll(statusBloqueados);
+        if (statusBloqueados != null) {
+            args.addAll(statusBloqueados);
+        }
         return jdbc.query(sql, MAPPER_QUESTAO, args.toArray());
     }
 
-    /** Comentários atuais (e não bloqueados) dos ids pedidos, na ordem de {@code ids}. */
+    @SuppressWarnings("unchecked")
     public Map<Long, FonteRag> atuais(Collection<Long> ids, Collection<String> statusBloqueados) {
-        if (ids.isEmpty()) {
+        if (ids == null || ids.isEmpty()) {
             return Map.of();
         }
+
+        Set<String> statusSet = statusBloqueados == null ? Set.of() : Set.copyOf(statusBloqueados);
+        Map<Long, FonteRag> resultado = LinkedHashMap.newLinkedHashMap(ids.size());
+        List<Long> faltantes = new ArrayList<>();
+
+        if (cacheIndividual != null) {
+            for (Long id : ids) {
+                Object cached = cacheIndividual.getIfPresent(chaveIndividual(id, statusSet));
+                if (cached instanceof Optional<?> opt) {
+                    ((Optional<FonteRag>) opt).ifPresent(fonte -> resultado.put(id, fonte));
+                } else {
+                    faltantes.add(id);
+                }
+            }
+        } else {
+            faltantes.addAll(ids);
+        }
+
+        if (!faltantes.isEmpty()) {
+            Map<Long, FonteRag> doBanco = buscarAtuaisNoBanco(faltantes, statusSet);
+            resultado.putAll(doBanco);
+
+            if (cacheIndividual != null) {
+                for (Long id : faltantes) {
+                    cacheIndividual.put(chaveIndividual(id, statusSet), Optional.ofNullable(doBanco.get(id)));
+                }
+            }
+        }
+
+        return Collections.unmodifiableMap(resultado);
+    }
+
+    private Map<Long, FonteRag> buscarAtuaisNoBanco(List<Long> ids, Set<String> statusBloqueados) {
         String sql = """
                 SELECT a.id, a.questao_id, a.letra, a.comentario
                   FROM alternativas a
@@ -76,19 +114,22 @@ public class ComentariosRepository {
                 ps.setString(idx++, status);
             }
         };
-        List<FonteRag> lidas = jdbc.query(sql, setter, MAPPER_SEMELHANTE);
 
-        Map<Long, FonteRag> porId = new LinkedHashMap<>();
+        List<FonteRag> lidas = jdbc.query(sql, setter, MAPPER_SEMELHANTE);
+        Map<Long, FonteRag> porId = LinkedHashMap.newLinkedHashMap(lidas.size());
         lidas.forEach(f -> porId.put(f.alternativaId(), f));
         return porId;
     }
 
-    /** Valores sempre por bind (?): só a quantidade de placeholders é montada dinamicamente. */
+    private static String chaveIndividual(Long id, Set<String> statusSet) {
+        return id + ":" + statusSet;
+    }
+
     private static String clausulaStatus(Collection<String> statusBloqueados) {
-        if (statusBloqueados.isEmpty()) {
+        if (statusBloqueados == null || statusBloqueados.isEmpty()) {
             return "";
         }
-        String marcas = String.join(",", java.util.Collections.nCopies(statusBloqueados.size(), "?"));
-        return " AND (a.comentario_status IS NULL OR a.comentario_status NOT IN (" + marcas + "))";
+        String placeholders = String.join(",", Collections.nCopies(statusBloqueados.size(), "?"));
+        return " AND (a.comentario_status IS NULL OR a.comentario_status NOT IN (" + placeholders + "))";
     }
 }
