@@ -42,7 +42,7 @@ public class ComentariosRepository {
     @Cacheable(
             cacheNames = CacheConfig.COMENTARIOS_QUESTAO,
             key = "#questaoId + ':' + (#statusBloqueados != null ? T(java.util.Set).copyOf(#statusBloqueados) : 'NONE')",
-            unless = "#result == null"
+            sync = true
     )
     public List<FonteRag> daQuestao(int questaoId, Collection<String> statusBloqueados) {
         String sql = """

@@ -53,7 +53,12 @@ public record CascataProperties(
 
         @DurationMin(millis = 1)
         @DefaultValue("4500ms")
-        Duration hedgeDelay
+        Duration hedgeDelay,
+
+        /** Chamadas simultâneas por provedor (o Ollama tem limite próprio). Ajuste à capacidade contratada. */
+        @Positive
+        @DefaultValue("25")
+        int bulkheadMaxConcorrente
 ) {
 
     public CascataProperties {

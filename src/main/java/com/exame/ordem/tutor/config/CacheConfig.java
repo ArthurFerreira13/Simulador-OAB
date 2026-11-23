@@ -56,15 +56,15 @@ public class CacheConfig {
 
     @Bean
     public CacheManager cacheManager() {
-        var comentarios = criarCache(COMENTARIOS_QUESTAO, 500, Duration.ofMinutes(10));
-        var contexto = criarCache(CONTEXTO_QUESTAO, 2_000, Duration.ofMinutes(30));
-        var individual = criarCache(COMENTARIO_INDIVIDUAL, 5_000, Duration.ofMinutes(10));
+        var comentarios = criarCache(COMENTARIOS_QUESTAO, 4_000, Duration.ofMinutes(10));
+        var contexto = criarCache(CONTEXTO_QUESTAO, 8_000, Duration.ofMinutes(30));
+        var individual = criarCache(COMENTARIO_INDIVIDUAL, 12_000, Duration.ofMinutes(10));
 
         // 24h reduz custo de tokens; trade-off aceito contra staleness
         // do RAG descrita no Javadoc da classe.
-        var llmResposta = criarCache(LLM_RESPOSTA, 2_000, Duration.ofHours(24));
+        var llmResposta = criarCache(LLM_RESPOSTA, 10_000, Duration.ofHours(24));
 
-        var ragEmbedding = criarCache(RAG_EMBEDDING, 1_500, Duration.ofHours(2));
+        var ragEmbedding = criarCache(RAG_EMBEDDING, 8_000, Duration.ofHours(2));
 
         var manager = new SimpleCacheManager();
         manager.setCaches(List.of(comentarios, contexto, individual, llmResposta, ragEmbedding));

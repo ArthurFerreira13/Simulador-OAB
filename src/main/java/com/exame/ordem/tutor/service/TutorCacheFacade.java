@@ -26,6 +26,8 @@ class TutorCacheFacade {
 
     void armazenar(String chave, String mensagem, String resposta, Integer questaoId) {
         if (resposta.isEmpty()) return;
+        // Pergunta com cara de injection: responde ao aluno, mas não planta a resposta para os demais.
+        if (PerguntaSuspeita.parece(mensagem)) return;
         if (llmCache != null) llmCache.put(chave, resposta);
         semanticCache.armazenar(mensagem, resposta, questaoId);
     }

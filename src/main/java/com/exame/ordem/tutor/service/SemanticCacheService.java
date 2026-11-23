@@ -2,6 +2,7 @@ package com.exame.ordem.tutor.service;
 
 import com.exame.ordem.tutor.config.RagProperties;
 import com.exame.ordem.tutor.config.SemanticCacheProperties;
+import com.exame.ordem.tutor.internal.ProvedorEmbedding;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import org.slf4j.Logger;
@@ -9,27 +10,33 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
-import java.util.Locale;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
- * Cache semântico de respostas do tutor, restrito à questão de origem para
- * evitar reutilizar explicações contextuais em questões diferentes.
+ * Cache semântico de respostas do tutor (Camada 2). Antes de chamar o LLM, procura no pgvector
+ * uma pergunta equivalente já respondida para a MESMA questão e mesma versão de prompt.
  *
- * <p><b>Formato do vetor:</b> usado como literal textual
- * ({@code [v1,v2,...]}) com cast {@code ?::vector} no SQL, em vez de
- * {@code PGvector.toSql(...)}. Motivo: o driver PostgreSQL está com
- * escopo {@code runtime} no {@code pom.xml} (padrão do Spring Boot),
- * e {@code PGvector.toSql} exige o driver em tempo de compilação.
- * O literal textual é aceito nativamente pelo pgvector.
- *
- * <p><b>Escolha do embedder:</b> mesmo critério do
- * {@link RagProviderResolver}: Ollama se {@link RagProperties#ollamaHabilitado()},
- * senão Gemini. Isso garante que o vetor da consulta está no mesmo
- * espaço vetorial do vetor armazenado.
+ * <p>Mudanças em relação à versão anterior:
+ * <ul>
+ *   <li>O vetor da pergunta vem de {@link EmbeddingDaPergunta}: uma chamada ao provedor por
+ *       pergunta, compartilhada com o RAG (antes eram até 3).</li>
+ *   <li>Gravação sem duplicar: não insere se já existe a mesma pergunta normalizada para a
+ *       mesma (prompt_version, questão).</li>
+ *   <li>Hits contados em memória e gravados em lote a cada minuto (antes: um UPDATE por hit).</li>
+ *   <li>{@code ttlDays} agora vale: limpeza diária de entradas antigas e de versões de prompt
+ *       diferentes da atual.</li>
+ *   <li>{@link #invalidarQuestao(Integer)} para descartar respostas de uma questão cujo
+ *       comentário foi corrigido.</li>
+ * </ul>
  */
 @Service
 public class SemanticCacheService {
@@ -39,8 +46,9 @@ public class SemanticCacheService {
     private final JdbcTemplate jdbc;
     private final SemanticCacheProperties props;
     private final EmbeddingModel embedder;
-    private final String provedorNome;
-    private final EmbeddingGate gate;
+    private final ProvedorEmbedding provedor;
+    private final EmbeddingDaPergunta embeddings;
+    private final ConcurrentHashMap<Long, LongAdder> hitsPendentes = new ConcurrentHashMap<>();
 
     SemanticCacheService(JdbcTemplate jdbc,
                          SemanticCacheProperties props,
@@ -49,30 +57,25 @@ public class SemanticCacheService {
                          ObjectProvider<EmbeddingModel> geminiProvider,
                          @Qualifier("ollamaEmbeddingModel")
                          EmbeddingModel ollamaModel,
-                         EmbeddingGate gate) {
+                         EmbeddingDaPergunta embeddings) {
         this.jdbc = jdbc;
         this.props = props;
-        this.gate = gate;
+        this.embeddings = embeddings;
 
         if (ragProps.ollamaHabilitado()) {
             this.embedder = ollamaModel;
-            this.provedorNome = "ollama";
+            this.provedor = ProvedorEmbedding.OLLAMA;
         } else {
             EmbeddingModel gemini = geminiProvider.getIfAvailable();
-            if (gemini != null) {
-                this.embedder = gemini;
-                this.provedorNome = "gemini";
-            } else {
-                this.embedder = null;
-                this.provedorNome = "NENHUM";
-            }
+            this.embedder = gemini;
+            this.provedor = gemini != null ? ProvedorEmbedding.GEMINI : null;
         }
 
         if (props.enabled() && embedder == null) {
             log.warn("SemanticCacheService: enabled=true mas nenhum EmbeddingModel disponível. Cache desabilitado.");
         } else {
             log.info("SemanticCacheService inicializado: enabled={}, provedor={}, threshold={}, promptVersion={}",
-                    props.enabled(), provedorNome, props.similarityThreshold(), props.promptVersion());
+                    props.enabled(), provedor, props.similarityThreshold(), props.promptVersion());
         }
     }
 
@@ -84,10 +87,7 @@ public class SemanticCacheService {
         }
 
         try {
-            Embedding consulta = gate.run(() -> embedder.embed(pergunta).content());
-            if (consulta == null) {
-                return Optional.empty();
-            }
+            Embedding consulta = embeddings.obter(provedor, embedder, pergunta);
             String vetor = toVectorLiteral(consulta.vector());
 
             LinhaCache linha = jdbc.query("""
@@ -96,10 +96,10 @@ public class SemanticCacheService {
                            1 - (embedding <=> ?::vector) AS similaridade
                       FROM semantic_cache
                      WHERE prompt_version = ?
-                      AND questao_id = ?
-                      AND (1 - (embedding <=> ?::vector)) >= ?
-                    ORDER BY embedding <=> ?::vector
-                    LIMIT 1
+                       AND questao_id = ?
+                       AND (1 - (embedding <=> ?::vector)) >= ?
+                     ORDER BY embedding <=> ?::vector
+                     LIMIT 1
                     """,
                             ps -> {
                                 ps.setString(1, vetor);
@@ -121,17 +121,7 @@ public class SemanticCacheService {
                 return Optional.empty();
             }
 
-            try {
-                jdbc.update("""
-                        UPDATE semantic_cache
-                           SET hits = hits + 1,
-                               ultimo_acesso_em = NOW()
-                         WHERE id = ?
-                        """, linha.id());
-            } catch (Exception e) {
-                log.debug("Falha ao incrementar hits do cache: {}", e.getMessage());
-            }
-
+            hitsPendentes.computeIfAbsent(linha.id(), id -> new LongAdder()).increment();
             log.debug("SemanticCache HIT (questao={}, score={}, id={})",
                     questaoId, linha.similaridade(), linha.id());
             return Optional.of(new RespostaCache(linha.resposta(), linha.similaridade()));
@@ -150,34 +140,91 @@ public class SemanticCacheService {
         }
 
         try {
-            Embedding emb = gate.run(() -> embedder.embed(pergunta).content());
-            if (emb == null) {
-                return;
-            }
+            Embedding emb = embeddings.obter(provedor, embedder, pergunta);
             String vetor = toVectorLiteral(emb.vector());
-            String normalizada = normalizar(pergunta);
+            String normalizada = EmbeddingDaPergunta.normalizar(pergunta);
 
-            jdbc.update("""
+            int inseridos = jdbc.update("""
                     INSERT INTO semantic_cache
                         (pergunta, pergunta_normalizada, resposta, embedding, prompt_version, questao_id)
-                    VALUES (?, ?, ?, ?::vector, ?, ?)
+                    SELECT ?, ?, ?, ?::vector, ?, CAST(? AS INTEGER)
+                     WHERE NOT EXISTS (
+                           SELECT 1 FROM semantic_cache
+                            WHERE prompt_version = ?
+                              AND questao_id IS NOT DISTINCT FROM CAST(? AS INTEGER)
+                              AND pergunta_normalizada = ?)
                     """,
-                    pergunta, normalizada, resposta, vetor,
-                    props.promptVersion(), questaoId);
+                    ps -> {
+                        ps.setString(1, pergunta);
+                        ps.setString(2, normalizada);
+                        ps.setString(3, resposta);
+                        ps.setString(4, vetor);
+                        ps.setString(5, props.promptVersion());
+                        ps.setObject(6, questaoId, Types.INTEGER);
+                        ps.setString(7, props.promptVersion());
+                        ps.setObject(8, questaoId, Types.INTEGER);
+                        ps.setString(9, normalizada);
+                    });
 
-            log.debug("SemanticCache STORE (questao={}, promptVersion={})",
-                    questaoId, props.promptVersion());
+            log.debug("SemanticCache {} (questao={}, promptVersion={})",
+                    inseridos > 0 ? "STORE" : "JA_EXISTE", questaoId, props.promptVersion());
 
         } catch (Exception e) {
             log.warn("Falha no cache semântico (armazenar): {}", e.getMessage());
         }
     }
 
-    /**
-     * Converte {@code float[]} no literal textual aceito pelo pgvector:
-     * {@code [v1,v2,...]}. Equivalente a {@code PGvector.toSql(...)}, mas
-     * sem depender do driver PostgreSQL em tempo de compilação.
-     */
+    /** Descarta as respostas em cache de uma questão (use ao corrigir um comentário). */
+    public int invalidarQuestao(Integer questaoId) {
+        int removidas = jdbc.update("DELETE FROM semantic_cache WHERE questao_id = ?", questaoId);
+        log.info("SemanticCache: {} entradas removidas da questão {}", removidas, questaoId);
+        return removidas;
+    }
+
+    /** Grava em lote os hits acumulados em memória. */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
+    void descarregarHits() {
+        if (hitsPendentes.isEmpty()) {
+            return;
+        }
+        List<Object[]> lote = new ArrayList<>();
+        for (Map.Entry<Long, LongAdder> e : hitsPendentes.entrySet()) {
+            long n = e.getValue().sumThenReset();
+            if (n > 0) {
+                lote.add(new Object[]{(int) Math.min(n, Integer.MAX_VALUE), e.getKey()});
+            }
+        }
+        hitsPendentes.values().removeIf(a -> a.sum() == 0);
+        if (lote.isEmpty()) {
+            return;
+        }
+        try {
+            jdbc.batchUpdate("""
+                    UPDATE semantic_cache
+                       SET hits = hits + ?, ultimo_acesso_em = NOW()
+                     WHERE id = ?
+                    """, lote);
+        } catch (Exception e) {
+            log.debug("Falha ao gravar hits do cache semântico: {}", e.getMessage());
+        }
+    }
+
+    /** Limpeza diária: entradas além do TTL e de versões de prompt que não são a atual. */
+    @Scheduled(cron = "0 30 3 * * *")
+    void purgar() {
+        try {
+            int removidas = jdbc.update("""
+                    DELETE FROM semantic_cache
+                     WHERE criado_em < NOW() - make_interval(days => ?)
+                        OR prompt_version <> ?
+                    """, props.ttlDays(), props.promptVersion());
+            log.info("SemanticCache purge: {} entradas removidas (ttl={} dias, promptVersion={})",
+                    removidas, props.ttlDays(), props.promptVersion());
+        } catch (Exception e) {
+            log.warn("Falha na limpeza do cache semântico: {}", e.getMessage());
+        }
+    }
+
     private static String toVectorLiteral(float[] vetor) {
         StringBuilder sb = new StringBuilder(vetor.length * 12);
         sb.append('[');
@@ -187,15 +234,6 @@ public class SemanticCacheService {
         }
         sb.append(']');
         return sb.toString();
-    }
-
-    private static String normalizar(String texto) {
-        if (texto == null) return "";
-        String semAcento = Normalizer.normalize(texto, Normalizer.Form.NFD)
-                .replaceAll("\\p{M}+", "");
-        return semAcento.toLowerCase(Locale.ROOT)
-                .replaceAll("[\\s\\p{Punct}]+", " ")
-                .trim();
     }
 
     private record LinhaCache(long id, String resposta, double similaridade) {}

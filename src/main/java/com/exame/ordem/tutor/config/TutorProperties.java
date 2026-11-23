@@ -20,7 +20,9 @@ public record TutorProperties(
         @NestedConfigurationProperty @Valid OllamaChat ollamaChat,
         @NestedConfigurationProperty @Valid Embedding embedding,
         @NestedConfigurationProperty @Valid Indexador geminiIndexador,
-        @NestedConfigurationProperty @Valid Indexador ollamaIndexador
+        @NestedConfigurationProperty @Valid Indexador ollamaIndexador,
+        @Valid @DefaultValue Admissao admissao,
+        @Valid @DefaultValue Sse sse
 ) {
 
     public record FreeLlmApi(
@@ -63,12 +65,24 @@ public record TutorProperties(
             @NotBlank @DefaultValue("nomic-embed-text") String ollamaModel,
             @Positive @DefaultValue("768") int ollamaDimension,
             @DurationMin(millis = 1) @DefaultValue("30s") Duration timeout,
-            @Positive @DefaultValue("2") int maxConcurrency
+            @Positive @DefaultValue("2") int maxConcurrency,
+            @DurationMin(millis = 1) @DefaultValue("3s") Duration esperaNaFila
     ) {
         public Embedding {
             geminiApiKey = geminiApiKey == null ? null : geminiApiKey.trim();
         }
     }
+
+    /** Controle de admissão das sessões SSE (ver AdmissaoSessoes). Ajuste a capacidade global ao que o pool e os LLMs aguentam. */
+    public record Admissao(
+            @Positive @DefaultValue("10000") int maxSessoesSimultaneas,
+            @Positive @DefaultValue("2") int maxStreamsPorUsuario
+    ) {}
+
+    /** Duração máxima de uma resposta em streaming. Deve cobrir maxTokens na velocidade do provedor mais lento. */
+    public record Sse(
+            @DurationMin(millis = 1000) @DefaultValue("120s") Duration timeout
+    ) {}
 
     public record Indexador(@DefaultValue("false") boolean habilitado) {}
 }

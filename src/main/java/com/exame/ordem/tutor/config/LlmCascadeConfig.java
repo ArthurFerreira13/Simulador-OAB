@@ -71,9 +71,9 @@ class LlmCascadeConfig {
     }
 
     @Bean
-    BulkheadRegistry llmBulkheads() {
+    BulkheadRegistry llmBulkheads(CascataProperties cascata) {
         var defaultConfig = BulkheadConfig.custom()
-                .maxConcurrentCalls(25)
+                .maxConcurrentCalls(cascata.bulkheadMaxConcorrente())
                 .maxWaitDuration(Duration.ZERO)
                 .build();
 

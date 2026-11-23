@@ -23,7 +23,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -115,9 +115,16 @@ public class LlmRouter implements StreamingChatModel {
         }
         this.limitesRpm = Map.copyOf(buckets);
 
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(
-                Thread.ofVirtual().name("llm-hedge-", 0).factory()
-        );
+        // Só marca o tempo. Tudo o que pode bloquear (estorno em banco, envio SSE, abertura de
+        // conexão do hedge) roda em thread virtual própria; senão uma operação lenta atrasaria
+        // todos os timers de hedge e de prazo do primeiro token.
+        var agendador = new ScheduledThreadPoolExecutor(1, Thread.ofVirtual().name("llm-hedge-", 0).factory());
+        agendador.setRemoveOnCancelPolicy(true); // timer cancelado sai da fila na hora
+        this.scheduler = agendador;
+    }
+
+    private static void emThreadVirtual(Runnable acao) {
+        Thread.ofVirtual().name("llm-timer-task").start(acao);
     }
 
     @PreDestroy
@@ -168,13 +175,13 @@ public class LlmRouter implements StreamingChatModel {
         }
 
         void iniciar() {
-            prazoPrimeiroToken = scheduler.schedule(() -> {
+            prazoPrimeiroToken = scheduler.schedule(() -> emThreadVirtual(() -> {
                 if (vencedor.get() == SEM_VENCEDOR && finalizado.compareAndSet(false, true)) {
                     log.warn("[LLM Router] Nenhum token em {}ms. Encerrando com erro.", PRAZO_PRIMEIRO_TOKEN_MS);
                     downstream.onError(new IllegalStateException(
                             "Nenhum provedor de IA respondeu no prazo."));
                 }
-            }, PRAZO_PRIMEIRO_TOKEN_MS, TimeUnit.MILLISECONDS);
+            }), PRAZO_PRIMEIRO_TOKEN_MS, TimeUnit.MILLISECONDS);
 
             disparar(0);
         }
@@ -233,12 +240,12 @@ public class LlmRouter implements StreamingChatModel {
             log.debug("[LLM Router] Disparando: {}", atual.name());
 
             if (index == 0 && disponiveis.size() > 1) {
-                scheduler.schedule(() -> {
+                scheduler.schedule(() -> emThreadVirtual(() -> {
                     if (!temVencedor() && !encerrada()) {
                         log.info("[LLM Router] Hedge acionado após {}ms para reserva.", hedgeDelayMs);
                         disparar(1);
                     }
-                }, hedgeDelayMs, TimeUnit.MILLISECONDS);
+                }), hedgeDelayMs, TimeUnit.MILLISECONDS);
             }
 
             try {

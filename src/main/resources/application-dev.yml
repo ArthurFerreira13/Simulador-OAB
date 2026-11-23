@@ -1,3 +1,11 @@
+management:
+  endpoint:
+    health:
+      show-details: always
+  health:
+    redis:
+      enabled: false
+
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/banco_oab_dev
@@ -21,16 +29,13 @@ logging:
     org.hibernate.SQL: info
 
 app:
-  # Rate limit de dev: aumentado para não bloquear setup do k6.
-  # Em prod (application-prod.yml ou application.yaml), manter 5/min
-  # para login — a proteção contra brute-force continua valendo.
   rate-limit:
     rules:
       login:
-        capacity: 200     # antes: 5 (herdado do application.yaml)
+        capacity: 200
         window: 1m
       cadastro:
-        capacity: 50      # antes: 3
+        capacity: 50
         window: 1h
 
   tutor:

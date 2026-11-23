@@ -49,7 +49,8 @@ public class TutorQuestaoRepository {
             rs.getString("letra"),
             rs.getString("texto"),
             rs.getBoolean("eh_correta"),
-            rs.getString("comentario")
+            rs.getString("comentario"),
+            rs.getString("comentario_status")
     );
 
     private final JdbcTemplate jdbc;
@@ -58,11 +59,7 @@ public class TutorQuestaoRepository {
         this.jdbc = jdbc;
     }
 
-    @Cacheable(
-            cacheNames = CacheConfig.CONTEXTO_QUESTAO,
-            key = "'ctx:' + #questaoId",
-            unless = "#result == null"           // antes: "#result == null || #result.isEmpty()"
-    )
+    @Cacheable(cacheNames = CacheConfig.CONTEXTO_QUESTAO, key = "'ctx:' + #questaoId", sync = true)
     public Optional<QuestaoContexto> contextoDaQuestao(int questaoId) {
         return jdbc.query("""
                 SELECT q.id, q.enunciado, q.anulada, p.titulo, p.ano
@@ -74,14 +71,10 @@ public class TutorQuestaoRepository {
                 .findFirst();
     }
 
-    @Cacheable(
-            cacheNames = CacheConfig.CONTEXTO_QUESTAO,
-            key = "'alt:' + #questaoId",
-            unless = "#result == null || #result.isEmpty()"   // List: não é desembrulhado
-    )
+    @Cacheable(cacheNames = CacheConfig.CONTEXTO_QUESTAO, key = "'alt:' + #questaoId", sync = true)
     public List<AlternativaTutorDTO> alternativasDaQuestao(int questaoId) {
         return jdbc.query("""
-                SELECT id, letra, texto, eh_correta, comentario
+                SELECT id, letra, texto, eh_correta, comentario, comentario_status
                   FROM alternativas
                  WHERE questao_id = ?
                  ORDER BY letra

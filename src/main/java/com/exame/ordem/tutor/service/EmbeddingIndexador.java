@@ -54,37 +54,49 @@ public class EmbeddingIndexador {
         this.log = LoggerFactory.getLogger("Indexador" + prefixoLog);
     }
 
+    /**
+     * Indexa os comentários ainda sem vetor.
+     *
+     * <p>A leitura usa cursor por id: um comentário que falha (texto inválido, erro pontual do
+     * provedor) é registrado e PULADO nesta execução. Antes, ele continuava pendente e voltava
+     * sempre no mesmo lote, e o laço nunca terminava. Os que falharam são retentados na próxima
+     * execução.
+     */
     public int indexarPendentes() {
         int total = 0;
+        int falhas = 0;
+        long cursor = 0;
         boolean interrompido = false;
 
         while (!interrompido) {
-            List<ComentarioPendente> lote = pendentes.proximoLote(LOTE);
+            List<ComentarioPendente> lote = pendentes.proximoLote(LOTE, cursor);
             if (lote.isEmpty()) {
                 break;
             }
+            cursor = lote.get(lote.size() - 1).alternativaId();
 
-            // takeWhile corta assim que um indexarUm devolve "parar".
+            // takeWhile corta assim que um indexarUm devolve "parar" (rate limit).
             List<Resultado> processados = lote.stream()
                     .map(this::indexarUm)
                     .takeWhile(Resultado::continuar)
                     .toList();
 
-            total += (int) processados.stream()
-                    .filter(Resultado::indexado)
-                    .count();
+            total += (int) processados.stream().filter(Resultado::indexado).count();
+            falhas += (int) processados.stream().filter(r -> !r.indexado()).count();
 
-            log.info("{} Progresso: {} comentários indexados", prefixoLog, total);
+            log.info("{} Progresso: {} indexados, {} falhas pontuais", prefixoLog, total, falhas);
 
-            // takeWhile descarta o item que devolveu "parar" — se o
-            // tamanho é menor, houve corte por rate limit.
+            // takeWhile descarta o item que devolveu "parar": tamanho menor = corte por rate limit.
             interrompido = processados.size() < lote.size();
         }
 
         if (interrompido) {
-            log.warn("{} Interrompido por rate limit. {} até agora. "
+            log.warn("{} Interrompido por rate limit. {} indexados até agora. "
                             + "Suba a app novamente para retomar.",
                     prefixoLog, total);
+        } else if (falhas > 0) {
+            log.warn("{} Concluído com {} comentário(s) não indexados; serão retentados na próxima execução.",
+                    prefixoLog, falhas);
         }
         return total;
     }

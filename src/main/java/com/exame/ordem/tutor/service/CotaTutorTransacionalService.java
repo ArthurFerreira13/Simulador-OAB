@@ -1,7 +1,7 @@
 package com.exame.ordem.tutor.service;
 
-import com.exame.ordem.system.erro.excecoes.RegraDeNegocioException;
-import com.exame.ordem.tutor.internal.UsoTutorDia;
+import com.exame.ordem.tutor.TutorAcessoNegadoException;
+import com.exame.ordem.tutor.TutorLimiteAtingidoException;
 import com.exame.ordem.tutor.internal.UsoTutorDiaRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,8 +10,14 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * Operações curtas e transacionais sobre a cota diária. Cada método abre e fecha a transação
+ * sozinho: o fluxo de streaming nunca segura conexão de banco.
+ */
 @Service
 public class CotaTutorTransacionalService {
+
+    public record UsoDia(int mensagens, long tokens) {}
 
     private final UsoTutorDiaRepository usoRepository;
     private final Clock clock;
@@ -21,43 +27,35 @@ public class CotaTutorTransacionalService {
         this.clock = clock;
     }
 
+    /**
+     * Reserva uma mensagem de forma atômica (INSERT ... ON CONFLICT ... WHERE dentro do limite).
+     *
+     * @throws TutorAcessoNegadoException  plano sem acesso ao tutor (limites zerados)
+     * @throws TutorLimiteAtingidoException limite diário de mensagens ou tokens atingido
+     */
     @Transactional
     public void reservar(Long usuarioId, LocalDate dia, int limiteMensagens, long limiteTokens) {
         if (limiteMensagens <= 0 || limiteTokens <= 0) {
-            throw new RegraDeNegocioException("Acesso ao tutor não disponível.");
+            throw new TutorAcessoNegadoException("O tutor não está disponível no seu plano.");
         }
-
         LocalDateTime agora = LocalDateTime.now(clock);
-        int reservou = usoRepository.reservarAtomico(
-                usuarioId, dia, limiteMensagens, limiteTokens, agora);
-
+        int reservou = usoRepository.reservarAtomico(usuarioId, dia, limiteMensagens, limiteTokens, agora);
         if (reservou == 0) {
             String motivo = usoRepository.findByUsuarioIdAndData(usuarioId, dia)
                     .map(uso -> uso.getContador() >= limiteMensagens
                             ? "Limite diário de mensagens do tutor atingido (" + limiteMensagens + ")."
                             : "Limite diário de tokens do tutor atingido (" + limiteTokens + ").")
                     .orElse("Limite diário de uso do tutor atingido.");
-            throw new RegraDeNegocioException(motivo);
+            throw new TutorLimiteAtingidoException(motivo);
         }
     }
 
+    /** Uma única leitura para mensagens e tokens do dia. */
     @Transactional(readOnly = true)
-    public UsoTutorDia consultar(Long usuarioId, LocalDate dia) {
-        return usoRepository.findByUsuarioIdAndData(usuarioId, dia).orElse(null);
-    }
-
-    @Transactional(readOnly = true)
-    public int mensagensUsadas(Long usuarioId, LocalDate dia) {
+    public UsoDia uso(Long usuarioId, LocalDate dia) {
         return usoRepository.findByUsuarioIdAndData(usuarioId, dia)
-                .map(UsoTutorDia::getContador)
-                .orElse(0);
-    }
-
-    @Transactional(readOnly = true)
-    public long tokensUsados(Long usuarioId, LocalDate dia) {
-        return usoRepository.findByUsuarioIdAndData(usuarioId, dia)
-                .map(UsoTutorDia::getTokens)
-                .orElse(0L);
+                .map(u -> new UsoDia(u.getContador(), u.getTokens()))
+                .orElse(new UsoDia(0, 0L));
     }
 
     @Transactional

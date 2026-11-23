@@ -15,7 +15,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
-import java.time.Duration;
 
 @Configuration
 class OllamaEmbeddingConfig {
@@ -26,7 +25,7 @@ class OllamaEmbeddingConfig {
         return OllamaEmbeddingModel.builder()
                 .baseUrl(cfg.ollamaUrl())
                 .modelName(cfg.ollamaModel())
-                .timeout(Duration.ofSeconds(60))
+                .timeout(cfg.timeout())
                 .build();
     }
 

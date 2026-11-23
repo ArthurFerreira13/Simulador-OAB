@@ -1,7 +1,6 @@
 package com.exame.ordem.tutor.service;
 
 import com.exame.ordem.system.embedding.EmbeddingErrors;
-import com.exame.ordem.tutor.config.CacheConfig;
 import com.exame.ordem.tutor.config.RagProperties;
 import com.exame.ordem.tutor.internal.ComentariosRepository;
 import com.exame.ordem.tutor.internal.FonteRag;
@@ -16,15 +15,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -40,8 +35,7 @@ public class RagProviderResolver {
     private final ComentariosRepository comentarios;
     private final ComentariosDaQuestaoService comentariosDaQuestao;
     private final RagProperties props;
-    private final Cache embeddingCache;
-    private final EmbeddingGate gate;
+    private final EmbeddingDaPergunta embeddings;
 
     RagProviderResolver(
             @Qualifier("geminiEmbeddingModel") ObjectProvider<EmbeddingModel> geminiModelProvider,
@@ -51,8 +45,7 @@ public class RagProviderResolver {
             ComentariosRepository comentarios,
             ComentariosDaQuestaoService comentariosDaQuestao,
             RagProperties props,
-            CacheManager cacheManager,
-            EmbeddingGate gate) {
+            EmbeddingDaPergunta embeddings) {
 
         List<Par> configurados = new ArrayList<>(2);
         if (props.ollamaHabilitado()) {
@@ -68,8 +61,7 @@ public class RagProviderResolver {
         this.comentarios = comentarios;
         this.comentariosDaQuestao = comentariosDaQuestao;
         this.props = props;
-        this.embeddingCache = cacheManager.getCache(CacheConfig.RAG_EMBEDDING);
-        this.gate = gate;
+        this.embeddings = embeddings;
     }
 
     public List<FonteRag> buscar(String pergunta, Integer questaoId) {
@@ -153,25 +145,9 @@ public class RagProviderResolver {
         return resultado;
     }
 
+    /** Vetor da pergunta compartilhado com o cache semântico (uma chamada por pergunta e provedor). */
     private Embedding obterEmbeddingComCache(Par par, String pergunta) {
-        String chave = par.provedor().name() + ":" + normalizar(pergunta);
-        if (embeddingCache != null) {
-            Embedding emCache = embeddingCache.get(chave, Embedding.class);
-            if (emCache != null) {
-                return emCache;
-            }
-        }
-        Embedding gerado = gate.run(() -> par.model().embed(pergunta).content());
-        if (embeddingCache != null && gerado != null) {
-            embeddingCache.put(chave, gerado);
-        }
-        return gerado;
-    }
-
-    private static String normalizar(String s) {
-        if (s == null) return "";
-        String semAcento = Normalizer.normalize(s, Normalizer.Form.NFD).replaceAll("\\p{M}+", "");
-        return semAcento.toLowerCase(Locale.ROOT).replaceAll("[\\s\\p{Punct}]+", " ").trim();
+        return embeddings.obter(par.provedor(), par.model(), pergunta);
     }
 
     private static Long alternativaId(TextSegment segmento) {

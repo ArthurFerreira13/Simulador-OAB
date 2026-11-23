@@ -1,5 +1,6 @@
 package com.exame.ordem.tutor.service;
 
+import com.exame.ordem.tutor.config.SemanticCacheProperties;
 import com.exame.ordem.tutor.internal.AlternativaTutorDTO;
 import com.exame.ordem.tutor.internal.FonteRag;
 import com.exame.ordem.tutor.internal.QuestaoContexto;
@@ -15,6 +16,12 @@ import java.util.Locale;
 
 @Component
 class TutorPromptFormatter {
+
+    private final SemanticCacheProperties cacheProps;
+
+    TutorPromptFormatter(SemanticCacheProperties cacheProps) {
+        this.cacheProps = cacheProps;
+    }
 
     String montarRespostaBanco(QuestaoContexto ctx, List<AlternativaTutorDTO> alternativas) {
         var sb = new StringBuilder();
@@ -48,8 +55,17 @@ class TutorPromptFormatter {
                            String pergunta) {
         var sb = new StringBuilder();
         sb.append("Questão: ").append(ctx.enunciado()).append("\n\n");
-        sb.append("Alternativas e Comentários:\n");
 
+        if (ctx.anulada()) {
+            sb.append("STATUS OFICIAL: QUESTÃO ANULADA PELA BANCA (não existe alternativa correta oficial).\n\n");
+        } else {
+            alternativas.stream()
+                    .filter(AlternativaTutorDTO::correta)
+                    .findFirst()
+                    .ifPresent(c -> sb.append("Gabarito oficial: alternativa ").append(c.letra()).append("\n\n"));
+        }
+
+        sb.append("Alternativas e Comentários:\n");
         for (AlternativaTutorDTO alt : alternativas) {
             sb.append("- ").append(alt.letra()).append(") ").append(alt.texto()).append("\n");
             if (alt.possuiComentario()) {
@@ -60,18 +76,24 @@ class TutorPromptFormatter {
         var semelhantes = fontes.stream()
                 .filter(f -> f.origem() == FonteRag.Origem.SEMELHANTE)
                 .toList();
-
         if (!semelhantes.isEmpty()) {
             sb.append("\nFontes Adicionais (Outras Questões):\n");
             semelhantes.forEach(f -> sb.append("- ").append(f.texto()).append("\n"));
         }
 
-        sb.append("\nDúvida do Aluno: ").append(pergunta);
+        // Entrada do aluno delimitada: o system prompt a trata como dado, nunca como instrução.
+        sb.append("\n<duvida_do_aluno>\n").append(sanitizarEntrada(pergunta)).append("\n</duvida_do_aluno>");
         return sb.toString();
     }
 
+    private static String sanitizarEntrada(String pergunta) {
+        if (pergunta == null) return "";
+        return pergunta.replaceAll("(?i)</?\\s*duvida_do_aluno\\s*>", "");
+    }
+
     String gerarChaveCache(QuestaoContexto ctx, List<AlternativaTutorDTO> alternativas, String mensagem) {
-        String base = montarPromptLlm(ctx, alternativas, List.of(), normalizar(mensagem));
+        String base = cacheProps.promptVersion() + "|"
+                + montarPromptLlm(ctx, alternativas, List.of(), normalizar(mensagem));
         return sha256(base);
     }
 

@@ -1,7 +1,12 @@
 package com.exame.ordem.tutor.service;
 
 import com.exame.ordem.tutor.TutorIaService;
+import com.exame.ordem.tutor.TutorQuestaoNaoEncontradaException;
+import com.exame.ordem.tutor.TutorAcessoNegadoException;
+import com.exame.ordem.tutor.config.RagProperties;
+import com.exame.ordem.tutor.config.TutorProperties;
 import com.exame.ordem.tutor.dto.UsoTutorResumo;
+import com.exame.ordem.tutor.internal.AlternativaTutorDTO;
 import com.exame.ordem.tutor.internal.FonteRag;
 import com.exame.ordem.tutor.internal.TutorQuestaoRepository;
 import org.slf4j.Logger;
@@ -13,11 +18,18 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 
+/**
+ * Orquestra uma conversa do tutor. Ordem de proteção (do mais barato ao mais caro):
+ * acesso do plano, existência da questão (cache), admissão de sessão (global e por usuário),
+ * reserva atômica de cota. Só então abre o SSE e dispara o fluxo.
+ */
 @Service
 public class TutorIaServiceImpl implements TutorIaService {
 
     private static final Logger log = LoggerFactory.getLogger(TutorIaServiceImpl.class);
-    private static final long SSE_TIMEOUT_MILLIS = 45_000L;
+
+    /** Estimativa grosseira de tokens do prompt (português ~3 caracteres por token). */
+    private static final int CARACTERES_POR_TOKEN = 3;
 
     private final RagProviderResolver ragResolver;
     private final CotaTutorTransacionalService cotaService;
@@ -29,9 +41,13 @@ public class TutorIaServiceImpl implements TutorIaService {
     private final TutorCacheFacade cache;
     private final TutorStreamingLlm streamingLlm;
     private final ProvedoresLlm provedoresLlm;
+    private final AdmissaoSessoes admissao;
+    private final RagProperties ragProps;
+    private final long sseTimeoutMillis;
     private final Clock clock;
 
-    public TutorIaServiceImpl(
+    // Package-private de propósito: recebe tipos package-private (o Spring injeta por reflexão).
+    TutorIaServiceImpl(
             RagProviderResolver ragResolver,
             CotaTutorTransacionalService cotaService,
             TutorCotaSeguro cotaSeguro,
@@ -42,6 +58,9 @@ public class TutorIaServiceImpl implements TutorIaService {
             TutorCacheFacade cache,
             TutorStreamingLlm streamingLlm,
             ProvedoresLlm provedoresLlm,
+            AdmissaoSessoes admissao,
+            RagProperties ragProps,
+            TutorProperties props,
             Clock clock
     ) {
         this.ragResolver = ragResolver;
@@ -54,27 +73,57 @@ public class TutorIaServiceImpl implements TutorIaService {
         this.cache = cache;
         this.streamingLlm = streamingLlm;
         this.provedoresLlm = provedoresLlm;
+        this.admissao = admissao;
+        this.ragProps = ragProps;
+        this.sseTimeoutMillis = props.sse().timeout().toMillis();
         this.clock = clock;
     }
-
 
     @Override
     public SseEmitter conversar(Long usuarioId, Integer questaoId, String mensagem) {
         LocalDate hoje = LocalDate.now(clock);
+
+        // 1) Plano sem acesso: falha antes de tocar no banco de cota.
         var limites = limitesPolicy.para(usuarioId);
-        int tokensReserva = provedoresLlm.maxTokensResposta();
-        cotaService.reservar(usuarioId, hoje, limites.mensagens(), limites.tokens());
+        if (limites.mensagens() <= 0 || limites.tokens() <= 0) {
+            throw new TutorAcessoNegadoException("O tutor não está disponível no seu plano.");
+        }
 
-        var emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
+        // 2) Questão inexistente (leitura em cache): não gasta reserva nem sessão.
+        if (questaoRepository.contextoDaQuestao(questaoId).isEmpty()) {
+            throw new TutorQuestaoNaoEncontradaException("Questão não encontrada.");
+        }
+
+        // 3) Admissão: capacidade global e streams simultâneos por usuário.
+        var permissao = admissao.adquirir(usuarioId);
+
+        // 4) Reserva atômica da cota; se falhar, devolve a vaga de sessão.
+        try {
+            cotaService.reservar(usuarioId, hoje, limites.mensagens(), limites.tokens());
+        } catch (RuntimeException e) {
+            permissao.liberar();
+            throw e;
+        }
+
+        var emitter = new SseEmitter(sseTimeoutMillis);
         var sessao = new SessaoSse(emitter);
-        var cota = new CotaSessao(usuarioId, hoje, cotaSeguro, tokensReserva);
+        var cota = new CotaSessao(usuarioId, hoje, cotaSeguro, provedoresLlm.maxTokensResposta());
 
-        emitter.onCompletion(sessao::marcarEncerrada);
-        emitter.onError(ex -> { sessao.marcarEncerrada(); cota.encerrarComEstornoSeNecessario(); });
+        // liberar() é idempotente: completion, error e timeout podem se sobrepor.
+        emitter.onCompletion(() -> {
+            sessao.marcarEncerrada();
+            permissao.liberar();
+        });
+        emitter.onError(ex -> {
+            sessao.marcarEncerrada();
+            cota.encerrarComEstornoSeNecessario();
+            permissao.liberar();
+        });
         emitter.onTimeout(() -> {
             sessao.marcarEncerrada();
             cota.encerrarComEstornoSeNecessario();
             sessao.completarPorTimeout();
+            permissao.liberar();
         });
 
         Thread.ofVirtual()
@@ -94,9 +143,12 @@ public class TutorIaServiceImpl implements TutorIaService {
                 return;
             }
             var ctx = ctxOpt.get();
-            var alternativas = questaoRepository.alternativasDaQuestao(questaoId);
+            var alternativas = aplicarModeracao(questaoRepository.alternativasDaQuestao(questaoId));
 
-            if (sessao.isEncerrada()) return;
+            if (sessao.isEncerrada()) {
+                cota.estornarUmaVez();
+                return;
+            }
             sessao.enviarEvento("resposta", formatter.montarRespostaBanco(ctx, alternativas));
 
             String chave = formatter.gerarChaveCache(ctx, alternativas, mensagem);
@@ -110,10 +162,14 @@ public class TutorIaServiceImpl implements TutorIaService {
             }
 
             var fontes = buscarFontesSeguro(cota.usuarioId(), questaoId, mensagem);
-            if (sessao.isEncerrada()) return;
+            if (sessao.isEncerrada()) {
+                cota.estornarUmaVez();
+                return;
+            }
             sessao.comEmitter(em -> sseEventWriter.enviarMeta(em, fontes));
 
             String prompt = formatter.montarPromptLlm(ctx, alternativas, fontes, mensagem);
+            cota.definirEntradaEstimada(prompt.length() / CARACTERES_POR_TOKEN);
             streamingLlm.iniciar(sessao, cota, prompt, chave, questaoId, mensagem);
 
         } catch (Exception e) {
@@ -122,6 +178,18 @@ public class TutorIaServiceImpl implements TutorIaService {
             cota.estornarUmaVez();
             avisoFinal(sessao, "Ocorreu um erro ao carregar os dados da questão.");
         }
+    }
+
+    /**
+     * Mesma regra de moderação do RAG, aplicada aos comentários da própria questão: comentário
+     * com status bloqueado (ex.: ERRADO, SUSPEITO) não é exibido nem enviado ao LLM.
+     */
+    private List<AlternativaTutorDTO> aplicarModeracao(List<AlternativaTutorDTO> alternativas) {
+        return alternativas.stream()
+                .map(a -> a.possuiComentario() && ragProps.isStatusBloqueado(a.comentarioStatus())
+                        ? a.semComentario()
+                        : a)
+                .toList();
     }
 
     private List<FonteRag> buscarFontesSeguro(Long usuarioId, Integer questaoId, String mensagem) {
@@ -142,21 +210,14 @@ public class TutorIaServiceImpl implements TutorIaService {
     public UsoTutorResumo consultarUso(Long usuarioId) {
         LocalDate hoje = LocalDate.now(clock);
         var limites = limitesPolicy.para(usuarioId);
-
-        int mensagensUsadas = cotaService.mensagensUsadas(usuarioId, hoje);
-        long tokensUsados = cotaService.tokensUsados(usuarioId, hoje);
-
-        int limiteDiario = limites.mensagens();
-        long limiteTokens = limites.tokens();
-        int restantes = Math.max(0, limiteDiario - mensagensUsadas);
+        var uso = cotaService.uso(usuarioId, hoje);
 
         return new UsoTutorResumo(
-                mensagensUsadas,
-                tokensUsados,
-                limiteDiario,
-                limiteTokens,
-                restantes
+                uso.mensagens(),
+                uso.tokens(),
+                limites.mensagens(),
+                limites.tokens(),
+                Math.max(0, limites.mensagens() - uso.mensagens())
         );
     }
-
 }
