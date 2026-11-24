@@ -1,11 +1,8 @@
 /**
- * Módulo Legislação: dono de normas, versões, artigos e embeddings jurídicos.
- *
- * <p>API pública: {@link LegislacaoQuery} e o pacote {@code dto}.
- * Nenhum outro módulo deve acessar {@code internal}. Este módulo NÃO depende do {@code tutor}.
+ * Módulo Legislação: dono das normas, dispositivos, versões imutáveis, documentos-fonte e jobs
+ * de ingestão. Contrato público: {@link com.exame.ordem.legislacao.LegislacaoConsulta} e o pacote
+ * {@code dto}. {@code internal}, {@code service} e {@code controller} não são consumidos por
+ * outros módulos. Este módulo NÃO depende do {@code tutor}.
  */
-@org.springframework.modulith.ApplicationModule(
-        displayName = "Legislação",
-        allowedDependencies = {"system"}
-)
+@org.springframework.modulith.ApplicationModule(displayName = "Legislação")
 package com.exame.ordem.legislacao;
