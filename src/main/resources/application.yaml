@@ -25,7 +25,6 @@ spring:
       validation-timeout: 5000
       leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}
 
-
   jpa:
     hibernate:
       ddl-auto: validate
@@ -86,6 +85,16 @@ app:
 
   trial:
     dias: ${TRIAL_DIAS:7}
+
+  legislacao:
+    consulta:
+      min-rank: ${LEGISLACAO_CONSULTA_MIN_RANK:0.15}
+    embedding:
+      habilitado: ${LEGISLACAO_EMBEDDING_HABILITADO:false}
+      perfil: ${LEGISLACAO_EMBEDDING_PERFIL:GEMINI}
+      modelo: ${LEGISLACAO_EMBEDDING_MODEL:}
+      lote: ${LEGISLACAO_EMBEDDING_LOTE:32}
+      intervalo: ${LEGISLACAO_EMBEDDING_INTERVALO:PT5M}
 
   tutor:
     cascata:

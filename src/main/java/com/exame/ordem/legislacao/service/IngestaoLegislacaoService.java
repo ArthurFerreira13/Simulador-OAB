@@ -1,11 +1,11 @@
 package com.exame.ordem.legislacao.service;
 
 import com.exame.ordem.legislacao.LegislacaoException;
+import com.exame.ordem.legislacao.dto.DadosNorma;
 import com.exame.ordem.legislacao.internal.EstruturaLegalParser;
 import com.exame.ordem.legislacao.internal.EstruturaLegalParser.Dispositivo;
 import com.exame.ordem.legislacao.internal.Hashes;
 import com.exame.ordem.legislacao.internal.LegislacaoRepository;
-import com.exame.ordem.legislacao.internal.LegislacaoRepository.DadosNorma;
 import com.exame.ordem.legislacao.internal.LegislacaoRepository.NovaVersao;
 import com.exame.ordem.legislacao.internal.TextoBusca;
 import com.exame.ordem.legislacao.internal.TextoNormalizador;
@@ -26,18 +26,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Ingestão de uma norma a partir de texto já coletado (manual ou vindo de um coletor).
- *
- * <p>Pipeline em transações curtas, sem I/O externo dentro delas:
- * <ol>
- *   <li>registra norma, documento-fonte (checksum) e job PARSING;</li>
- *   <li>interpreta o texto (sem banco) e valida;</li>
- *   <li>grava dispositivos e NOVAS versões só do que mudou (hash) e publica o job de forma
- *       atômica. Falha em qualquer ponto deixa o job FAILED, sem publicar nada.</li>
- * </ol>
- * É idempotente: o mesmo texto não cria documento, versão nem job novo.
- */
 @Service
 public class IngestaoLegislacaoService {
 
@@ -56,8 +44,44 @@ public class IngestaoLegislacaoService {
             String formato,
             boolean consolidado,
             String texto,
+            boolean forcarReprocessamento,
             boolean forcarPublicacao
-    ) {}
+    ) {
+        public static Builder builder() {
+            return new Builder();
+        }
+
+        public static final class Builder {
+            private DadosNorma norma;
+            private Set<String> aliases = Set.of();
+            private Set<Long> disciplinaIds = Set.of();
+            private String fonte;
+            private String url;
+            private String formato;
+            private boolean consolidado;
+            private String texto;
+            private boolean forcarReprocessamento;
+            private boolean forcarPublicacao;
+
+            public Builder norma(DadosNorma norma) { this.norma = norma; return this; }
+            public Builder aliases(Set<String> aliases) { this.aliases = aliases; return this; }
+            public Builder disciplinaIds(Set<Long> disciplinaIds) { this.disciplinaIds = disciplinaIds; return this; }
+            public Builder fonte(String fonte) { this.fonte = fonte; return this; }
+            public Builder url(String url) { this.url = url; return this; }
+            public Builder formato(String formato) { this.formato = formato; return this; }
+            public Builder consolidado(boolean consolidado) { this.consolidado = consolidado; return this; }
+            public Builder texto(String texto) { this.texto = texto; return this; }
+            public Builder forcarReprocessamento(boolean v) { this.forcarReprocessamento = v; return this; }
+            public Builder forcarPublicacao(boolean v) { this.forcarPublicacao = v; return this; }
+
+            public ComandoIngestao build() {
+                return new ComandoIngestao(
+                        norma, aliases, disciplinaIds, fonte, url, formato,
+                        consolidado, texto, forcarReprocessamento, forcarPublicacao
+                );
+            }
+        }
+    }
 
     public enum Status { PUBLICADO, SEM_MUDANCA }
 
@@ -116,7 +140,7 @@ public class IngestaoLegislacaoService {
         repo.substituirDisciplinas(normaId, cmd.disciplinaIds() == null ? Set.of() : cmd.disciplinaIds());
 
         var existente = repo.documentoPorChecksum(normaId, checksum);
-        if (existente.isPresent() && existente.get().jobPublicado()) {
+        if (existente.isPresent() && existente.get().jobPublicado() && !cmd.forcarReprocessamento()) {
             return new Registro(normaId, existente.get().id(), null, true, cmd.consolidado());
         }
         UUID documentoId = existente.map(LegislacaoRepository.DocumentoExistente::id).orElseGet(() ->
@@ -202,10 +226,6 @@ public class IngestaoLegislacaoService {
                 novos, versoes.size(), inalterados, ausentes, List.copyOf(avisos));
     }
 
-    /**
-     * Ausência de nota de revogação NÃO prova vigência. Só uma fonte marcada como consolidada
-     * autoriza VIGENTE (e o tutor deve citar a data de coleta). Caso contrário fica UNKNOWN.
-     */
     static String situacaoParaGravar(Dispositivo d, boolean consolidado) {
         return switch (d.situacao()) {
             case REVOGADO -> "REVOGADO";

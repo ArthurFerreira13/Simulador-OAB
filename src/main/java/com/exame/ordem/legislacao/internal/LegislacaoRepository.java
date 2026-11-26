@@ -1,5 +1,6 @@
 package com.exame.ordem.legislacao.internal;
 
+import com.exame.ordem.legislacao.dto.DadosNorma;
 import com.exame.ordem.legislacao.dto.SituacaoVigencia;
 import com.exame.ordem.legislacao.dto.TrechoNormativo;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -11,7 +12,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -28,10 +28,6 @@ import java.util.UUID;
  */
 @Repository
 public class LegislacaoRepository {
-
-    public record DadosNorma(String esfera, String especie, String numero, Integer ano, String epigrafe,
-                             String nomeCurto, String ementa, String orgao, LocalDate dataAto,
-                             LocalDate dataPublicacao, boolean indexarNoTutor) {}
 
     public record DocumentoExistente(UUID id, boolean jobPublicado) {}
 
