@@ -50,12 +50,12 @@ public class LegislacaoRepository {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (chave_canonica) DO UPDATE
                    SET epigrafe = EXCLUDED.epigrafe,
-                       nome_curto = EXCLUDED.nome_curto,
-                       ementa = EXCLUDED.ementa,
-                       orgao = EXCLUDED.orgao,
-                       data_ato = EXCLUDED.data_ato,
-                       data_publicacao = EXCLUDED.data_publicacao,
-                       indexar_no_tutor = EXCLUDED.indexar_no_tutor,
+                       nome_curto = COALESCE(legislacao_norma.nome_curto, EXCLUDED.nome_curto),
+                       ementa = COALESCE(EXCLUDED.ementa, legislacao_norma.ementa),
+                       orgao = COALESCE(EXCLUDED.orgao, legislacao_norma.orgao),
+                       data_ato = COALESCE(EXCLUDED.data_ato, legislacao_norma.data_ato),
+                       data_publicacao = COALESCE(EXCLUDED.data_publicacao, legislacao_norma.data_publicacao),
+                       indexar_no_tutor = legislacao_norma.indexar_no_tutor OR EXCLUDED.indexar_no_tutor,
                        atualizado_em = now()
                 RETURNING id
                 """, UUID.class,
@@ -84,6 +84,40 @@ public class LegislacaoRepository {
         }
     }
 
+    /**
+     * Acrescenta aliases sem remover os existentes (uma reingestão que não conhece os apelidos curados
+     * não pode apagá-los). Devolve os aliases que já pertencem a OUTRA norma; esses não são alterados.
+     */
+    public List<String> adicionarAliases(UUID normaId, Collection<String> aliasNormalizados) {
+        List<String> conflitos = new ArrayList<>();
+        for (String alias : aliasNormalizados) {
+            int inseridos = jdbc.update("""
+                    INSERT INTO legislacao_norma_alias (alias_normalizado, norma_id) VALUES (?, ?)
+                    ON CONFLICT (alias_normalizado) DO NOTHING
+                    """, alias, normaId);
+            if (inseridos == 0) {
+                boolean deOutraNorma = jdbc.query(
+                                "SELECT norma_id FROM legislacao_norma_alias WHERE alias_normalizado = ?",
+                                (rs, i) -> rs.getObject("norma_id", UUID.class), alias)
+                        .stream().findFirst().map(dono -> !dono.equals(normaId)).orElse(false);
+                if (deOutraNorma) {
+                    conflitos.add(alias);
+                }
+            }
+        }
+        return conflitos;
+    }
+
+    /** Acrescenta disciplinas sem remover as existentes. */
+    public void adicionarDisciplinas(UUID normaId, Collection<Long> disciplinaIds) {
+        for (Long id : disciplinaIds) {
+            jdbc.update("""
+                    INSERT INTO legislacao_norma_disciplina (norma_id, disciplina_id) VALUES (?, ?)
+                    ON CONFLICT DO NOTHING
+                    """, normaId, id);
+        }
+    }
+
     // ------------------------------------------------------------------ documento e job
 
     /** Documento já coletado com o mesmo checksum, e se algum job dele chegou a PUBLISHED/SUPERSEDED. */
@@ -96,6 +130,21 @@ public class LegislacaoRepository {
                  WHERE f.norma_id = ? AND f.checksum = ?
                 """, (rs, i) -> new DocumentoExistente(rs.getObject("id", UUID.class), rs.getBoolean("publicado")),
                 normaId, checksum).stream().findFirst();
+    }
+
+    /**
+     * Documento por trás da versão atualmente publicada da norma (o job PUBLISHED mais recente).
+     * Serve para distinguir "texto idêntico ao publicado" de "texto igual a um antigo já superado".
+     */
+    public Optional<UUID> documentoPublicadoAtual(UUID normaId) {
+        return jdbc.query("""
+                SELECT documento_id
+                  FROM legislacao_ingestao_job
+                 WHERE norma_id = ? AND estado = 'PUBLISHED' AND documento_id IS NOT NULL
+                 ORDER BY finalizado_em DESC NULLS LAST, criado_em DESC
+                 LIMIT 1
+                """, (rs, i) -> rs.getObject("documento_id", UUID.class), normaId)
+                .stream().findFirst();
     }
 
     public UUID inserirDocumento(UUID normaId, String fonte, String url, String formato, boolean consolidado,

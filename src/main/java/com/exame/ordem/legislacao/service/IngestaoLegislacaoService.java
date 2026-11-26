@@ -136,11 +136,26 @@ public class IngestaoLegislacaoService {
 
     private Registro registrar(ComandoIngestao cmd, String checksum) {
         UUID normaId = repo.upsertNorma(cmd.norma());
-        repo.substituirAliases(normaId, aliasesNormalizados(cmd.aliases()));
-        repo.substituirDisciplinas(normaId, cmd.disciplinaIds() == null ? Set.of() : cmd.disciplinaIds());
 
+        // "Não informado" não é "apagar": só acrescenta, nunca remove aliases/disciplinas já curados.
+        Set<String> aliases = aliasesNormalizados(cmd.aliases());
+        if (!aliases.isEmpty()) {
+            List<String> conflitos = repo.adicionarAliases(normaId, aliases);
+            if (!conflitos.isEmpty()) {
+                log.warn("Aliases que já pertencem a outra norma foram mantidos com o dono original "
+                        + "(norma={}): {}", normaId, conflitos);
+            }
+        }
+        if (cmd.disciplinaIds() != null && !cmd.disciplinaIds().isEmpty()) {
+            repo.adicionarDisciplinas(normaId, cmd.disciplinaIds());
+        }
+
+        // Sem mudança só quando o texto é o do documento publicado AGORA. Um texto igual a uma versão
+        // antiga já superada (A, depois B, depois A de novo) precisa ser reaplicado.
         var existente = repo.documentoPorChecksum(normaId, checksum);
-        if (existente.isPresent() && existente.get().jobPublicado() && !cmd.forcarReprocessamento()) {
+        boolean jaEhOPublicado = existente.isPresent()
+                && repo.documentoPublicadoAtual(normaId).filter(existente.get().id()::equals).isPresent();
+        if (jaEhOPublicado && !cmd.forcarReprocessamento()) {
             return new Registro(normaId, existente.get().id(), null, true, cmd.consolidado());
         }
         UUID documentoId = existente.map(LegislacaoRepository.DocumentoExistente::id).orElseGet(() ->
