@@ -8,9 +8,9 @@ management:
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/banco_oab_dev
-    username: postgres
-    password: admin
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/banco_oab_dev}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:admin}
     hikari:
       maximum-pool-size: ${DB_POOL_MAX_SIZE:30}
       minimum-idle: ${DB_POOL_MIN_IDLE:10}
@@ -20,13 +20,16 @@ spring:
 
   jpa:
     show-sql: false
+    open-in-view: false
     properties:
       hibernate:
-        format_sql: false
+        format_sql: ${HIBERNATE_FORMAT_SQL:false}
 
 logging:
   level:
-    org.hibernate.SQL: info
+    org.hibernate.SQL: ${LOG_HIBERNATE_SQL:warn}
+    org.flywaydb: info
+    com.exame.ordem.tutor.service.ProvedorPingService: ${LOG_PING_LEVEL:info}
 
 app:
   rate-limit:
@@ -38,8 +41,18 @@ app:
         capacity: 50
         window: 1h
 
+  legislacao:
+    consulta:
+      min-rank: ${LEGISLACAO_CONSULTA_MIN_RANK:0.15}
+    embedding:
+      habilitado: ${LEGISLACAO_EMBEDDING_HABILITADO:false}
+      perfil: ${LEGISLACAO_EMBEDDING_PERFIL:GEMINI}
+      modelo: ${LEGISLACAO_EMBEDDING_MODEL:}
+      lote: ${LEGISLACAO_EMBEDDING_LOTE:32}
+      intervalo: ${LEGISLACAO_EMBEDDING_INTERVALO:PT5M}
+
   tutor:
     freellmapi:
       autostart: true
     semantic-cache:
-      enabled: false
+      enabled: ${SEMANTIC_CACHE_ENABLED:true}
