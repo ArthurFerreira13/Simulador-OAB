@@ -11,6 +11,7 @@ import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -175,6 +176,23 @@ public class LegislacaoRepository {
                        finalizado_em = CASE WHEN ? IN ('PUBLISHED', 'FAILED', 'SUPERSEDED') THEN now() ELSE finalizado_em END
                  WHERE id = ?
                 """, estado, etapa, erro, estado, jobId);
+    }
+
+    /**
+     * Encerra como FAILED os jobs ainda "em andamento" que não tiveram atividade há mais que o limite.
+     * O job só muda de estado no fim, então um processo que caiu no meio o deixa em PARSING e o índice
+     * uk_leg_job_em_andamento passaria a bloquear a norma para sempre.
+     */
+    public int encerrarJobsOrfaos(Duration semAtividade) {
+        return jdbc.update("""
+                UPDATE legislacao_ingestao_job
+                   SET estado = 'FAILED',
+                       erro = COALESCE(erro, 'Interrompido: job sem atividade (processo encerrado durante a ingestão).'),
+                       atualizado_em = now(),
+                       finalizado_em = now()
+                 WHERE estado IN ('PENDING', 'FETCHED', 'PARSING', 'PARSED', 'EMBEDDING', 'VALIDATING')
+                   AND atualizado_em < now() - make_interval(secs => ?)
+                """, (double) semAtividade.toSeconds());
     }
 
     public boolean consolidado(UUID documentoId) {

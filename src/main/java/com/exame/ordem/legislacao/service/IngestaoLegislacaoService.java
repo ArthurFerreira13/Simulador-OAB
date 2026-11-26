@@ -155,7 +155,7 @@ public class IngestaoLegislacaoService {
         var existente = repo.documentoPorChecksum(normaId, checksum);
         boolean jaEhOPublicado = existente.isPresent()
                 && repo.documentoPublicadoAtual(normaId).filter(existente.get().id()::equals).isPresent();
-        if (jaEhOPublicado && !cmd.forcarReprocessamento() && !cmd.forcarReprocessamento()) {
+        if (jaEhOPublicado && !cmd.forcarReprocessamento()) {
             return new Registro(normaId, existente.get().id(), null, true, cmd.consolidado());
         }
         UUID documentoId = existente.map(LegislacaoRepository.DocumentoExistente::id).orElseGet(() ->

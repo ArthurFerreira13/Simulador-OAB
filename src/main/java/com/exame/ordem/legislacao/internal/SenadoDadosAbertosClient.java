@@ -14,7 +14,10 @@ import tools.jackson.databind.json.JsonMapper;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,7 +67,21 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
         }
 
         List<ItemIngestaoLegislacao> itens = new ArrayList<>(registros.size());
+        int ignorados = 0;
         for (JsonNode normaNode : registros) {
+            ItemIngestaoLegislacao item = converterParaItem(normaNode, filtro);
+            if (item == null) {
+                ignorados++;
+                continue;
+            }
+            itens.add(item);
+        }
+        if (ignorados > 0) {
+            log.info("{} registro(s) de tipo não suportado ignorados na consulta {}", ignorados, url);
+            if (itens.isEmpty()) {
+                log.warn("A consulta {} só trouxe tipos não suportados; informe 'tipo' no filtro, senão a "
+                        + "paginação por página vazia termina cedo demais.", url);
+            }
         }
         return itens;
     }
@@ -95,6 +112,7 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
         log.info("Acionando fallback local {} para filtro {} {}/{}",
                 filtro.arquivoFallbackLocal(), filtro.siglaTipoSenado(), filtro.numero(), filtro.ano());
 
+        String especieV25 = especieOuOutra(filtro.siglaTipoSenado());
         String numeroNorm = normalizarNumero(filtro.numero());
         String nomeCurto = primeiroNaoVazio(
                 filtro.nomeCurtoOverride(),
@@ -146,21 +164,36 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
                 textoDe(node, "tipo", "siglaTipo", "siglaTipoDocumento"),
                 filtro.siglaTipoSenado()
         );
+        String especieV25 = mapearEspecieV25(siglaSenado);
+        if (especieV25 == null) {
+            log.debug("Tipo '{}' não suportado; registro {} ignorado.", siglaSenado, codigo);
+            return null;
+        }
+        JsonNode detalheRoot = carregarDetalheJson(codigo);
         String descricaoTipo = textoDe(node, "descricao", "descricaoTipo");
         String numeroBruto = primeiroNaoVazio(
                 textoDe(node, "numero", "numeroDocumento"),
                 filtro.numero()
         );
         String numeroNormalizado = normalizarNumero(numeroBruto);
+        LocalDate dataAto = primeiraData(
+                textoDe(node, "dataAssinatura", "dataNorma", "dataDocumento", "data"),
+                buscarCampoRecursivo(detalheRoot, Set.of("dataassinatura", "datanorma", "datadocumento", "data"), v -> v.length() >= 10)
+        );
         Integer ano = parseInteiro(primeiroNaoVazio(
+                textoDe(node, "ano", "anoDocumento", "anoAssinatura"),
                 filtro.ano() != null ? filtro.ano().toString() : null
         ));
+        if (ano == null && dataAto != null) {
+            ano = dataAto.getYear();
+        }
 
         String tituloPadrao = (descricaoTipo != null ? descricaoTipo : (siglaSenado != null ? siglaSenado : "Norma"))
                 + (numeroNormalizado != null ? " nº " + numeroNormalizado : "")
                 + (ano != null ? ", de " + ano : "");
 
         String epigrafe = primeiroNaoVazio(
+                textoDe(node, "epigrafe", "descricaoIdentificacao", "titulo", "normaNome"),
                 buscarCampoRecursivo(detalheRoot, Set.of("epigrafe", "descricaoidentificacao", "titulo"), v -> true),
                 tituloPadrao
         );
@@ -174,8 +207,10 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
                 textoDe(node, "ementa", "textoEmenta", "resumo"),
                 buscarCampoRecursivo(detalheRoot, Set.of("ementa", "textoementa", "resumo"), v -> true)
         );
+        LocalDate dataPublicacao = primeiraData(
                 textoDe(node, "dataPublicacao", "publicacao"),
                 buscarCampoRecursivo(detalheRoot, Set.of("datapublicacao", "publicacao"), v -> v.length() >= 10)
+        );
 
         List<String> urlsCandidatas = resolverUrlsCandidatas(node, detalheRoot, codigo);
         String urlTexto = urlsCandidatas.isEmpty() ? null : urlsCandidatas.get(0);
@@ -282,6 +317,7 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
         if (node == null || node.isNull()) return null;
         if (node.isObject()) {
             for (var entry : node.properties()) {
+                if (nomesLower.contains(entry.getKey().toLowerCase(Locale.ROOT)) && entry.getValue().isValueNode()) {
                     String val = entry.getValue().asString();
                     if (val != null && !val.isBlank() && filtroValor.test(val.trim())) {
                         return val.trim();
@@ -302,6 +338,7 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
     private String montarUrlLista(FiltroSenadoLegislacao f) {
         List<String> params = new ArrayList<>();
         if (f.siglaTipoSenado() != null && !f.siglaTipoSenado().isBlank()) {
+            params.add("tipo=" + encode(f.siglaTipoSenado().trim().toUpperCase(Locale.ROOT)));
         }
         if (f.numero() != null && !f.numero().isBlank()) {
             params.add("numero=" + encode(f.numero().trim()));
@@ -323,7 +360,10 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
                 + (f.pagina() != null ? f.pagina() : 1);
     }
 
+    /** Espécie suportada pelo CHECK da V25, ou {@code null} para tipos que não são norma (acórdãos, atos...). */
     private String mapearEspecieV25(String sigla) {
+        if (sigla == null) return null;
+        String norm = sigla.trim().toUpperCase(Locale.ROOT);
         if (norm.startsWith("LEI-")) {
             return "LEI";
         }
@@ -337,7 +377,13 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
             case "DEL" -> "DECRETO_LEI";
             case "MPV" -> "MEDIDA_PROVISORIA";
             case "RSF", "RCN" -> "RESOLUCAO";
+            default -> null;
         };
+    }
+
+    private String especieOuOutra(String sigla) {
+        String especie = mapearEspecieV25(sigla);
+        return especie != null ? especie : "OUTRA";
     }
 
     private String normalizarNumero(String numero) {
@@ -355,9 +401,30 @@ class SenadoDadosAbertosClient implements SenadoLegislacaoGateway {
         }
     }
 
+    /** O Senado entrega dd/MM/yyyy ("03/09/2026"); o detalhe pode trazer ISO (yyyy-MM-dd[...]). */
+    private static final DateTimeFormatter DATA_BR =
+            DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT);
+
     private LocalDate parseData(String valor) {
         if (valor == null || valor.isBlank()) return null;
+        String v = valor.trim();
         try {
+            if (v.length() >= 10 && v.charAt(2) == '/') {
+                return LocalDate.parse(v.substring(0, 10), DATA_BR);
+            }
+            return LocalDate.parse(v.substring(0, Math.min(10, v.length())));
+        } catch (DateTimeException e) {
+            log.debug("Data não reconhecida: '{}'", valor);
+            return null;
+        }
+    }
+
+    /** Primeira data válida; um valor ilegível da lista não impede de tentar o detalhe. */
+    private LocalDate primeiraData(String... valores) {
+        for (String v : valores) {
+            LocalDate d = parseData(v);
+            if (d != null) return d;
+        }
         return null;
     }
 

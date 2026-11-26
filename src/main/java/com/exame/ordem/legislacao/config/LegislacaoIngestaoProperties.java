@@ -11,7 +11,9 @@ public record LegislacaoIngestaoProperties(
         int maxTentativas,
         Duration intervaloBase,
         Duration connectTimeout,
-        Duration requestTimeout
+        Duration requestTimeout,
+        /** Job em andamento sem atividade por mais que isso é considerado órfão (processo caiu no meio). */
+        Duration jobTimeout
 ) {
     public LegislacaoIngestaoProperties {
         diretorioCache = diretorioCache != null ? diretorioCache : Path.of("data/cache-legislacao");
@@ -19,5 +21,6 @@ public record LegislacaoIngestaoProperties(
         intervaloBase = intervaloBase != null ? intervaloBase : Duration.ofSeconds(2);
         connectTimeout = connectTimeout != null ? connectTimeout : Duration.ofSeconds(15);
         requestTimeout = requestTimeout != null ? requestTimeout : Duration.ofSeconds(30);
+        jobTimeout = jobTimeout != null && jobTimeout.isPositive() ? jobTimeout : Duration.ofMinutes(15);
     }
 }

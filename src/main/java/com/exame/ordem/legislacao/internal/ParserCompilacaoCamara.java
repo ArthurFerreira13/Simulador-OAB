@@ -1,5 +1,6 @@
 package com.exame.ordem.legislacao.internal;
 
+import org.intellij.lang.annotations.MagicConstant;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Element;
 
@@ -43,6 +44,7 @@ final class ParserCompilacaoCamara {
 
     record Resultado(List<Dispositivo> dispositivos, List<String> naoReconhecidos) { }
 
+    @MagicConstant(flagsFromClass = Pattern.class)
     private static final int FLAGS = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
 
     private static final Pattern HEADING = Pattern.compile(
